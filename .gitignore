@@ -250,3 +250,6 @@ $RECYCLE.BIN/
 
 certs/
 dist/
+
+.env
+argo-bot.yaml

@@ -1,0 +1,66 @@
+project_name: argo-bot
+before:
+  hooks:
+    - go mod tidy
+builds:
+  - id: argo-bot
+    binary: argo-bot
+    main: ./cmd/argo-bot
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/apono-io/argo-bot/pkg/core.Version={{.Version}} -X github.com/apono-io/argo-bot/pkg/core.Commit={{.Commit}} -X github.com/apono-io/argo-bot/pkg/core.BuildDate={{.Date}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+archives: []
+dockers:
+  - goos: linux
+    goarch: amd64
+    use: buildx
+    ids:
+      - argo-bot
+    image_templates:
+      - "ghcr.io/apono-io/argo-bot:{{ .Tag }}-amd64"
+    dockerfile: './cmd/argo-bot/Dockerfile'
+    build_flag_templates:
+      - "--pull"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title=argo-bot"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source=https://github.com/apono-io/weed"
+      - "--platform=linux/amd64"
+  - goos: linux
+    goarch: arm64
+    use: buildx
+    ids:
+      - argo-bot
+    image_templates:
+      - "ghcr.io/apono-io/argo-bot:{{ .Tag }}-arm64"
+    dockerfile: './cmd/argo-bot/Dockerfile'
+    build_flag_templates:
+      - "--pull"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--platform=linux/arm64"
+docker_manifests:
+  - name_template: "ghcr.io/apono-io/argo-bot:{{ .Tag }}"
+    image_templates:
+      - "ghcr.io/apono-io/argo-bot:{{ .Tag }}-amd64"
+      - "ghcr.io/apono-io/argo-bot:{{ .Tag }}-arm64"
+checksum:
+  name_template: 'checksums.txt'
+snapshot:
+  name_template: "{{ incpatch .Version }}-snapshot"
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
