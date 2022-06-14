@@ -3,12 +3,13 @@ package deploy
 import (
 	"context"
 	"errors"
+	"github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
-	"github.com/go-git/go-git/v5/plumbing/transport/http"
+	plumbinghttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/google/go-github/v45/github"
-	"golang.org/x/oauth2"
 	"io/ioutil"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
@@ -27,10 +28,11 @@ type GitClient interface {
 }
 
 func NewGithubClient(ctx context.Context, config GithubConfig) (GitClient, error) {
-	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: config.Token})
-	tc := oauth2.NewClient(ctx, ts)
+	client, err := createGithubClient(config.Auth)
+	if err != nil {
+		return nil, err
+	}
 
-	client := github.NewClient(tc)
 	repository, _, err := client.Repositories.Get(ctx, config.Organization, config.Repository)
 	if err != nil {
 		return nil, err
@@ -42,10 +44,19 @@ func NewGithubClient(ctx context.Context, config GithubConfig) (GitClient, error
 		repository:   config.Repository,
 		authorName:   config.AuthorName,
 		authorEmail:  config.AuthorEmail,
-		accessToken:  config.Token,
 		baseBranch:   *repository.DefaultBranch,
 		cloneUrl:     *repository.CloneURL,
 	}, nil
+}
+
+func createGithubClient(authConfig GithubAuthConfig) (*github.Client, error) {
+	tr := http.DefaultTransport
+	itr, err := ghinstallation.NewKeyFromFile(tr, int64(authConfig.AppId), int64(authConfig.InstallationId), authConfig.KeyPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return github.NewClient(&http.Client{Transport: itr}), nil
 }
 
 type githubClient struct {
@@ -54,7 +65,6 @@ type githubClient struct {
 	repository   string
 	authorName   string
 	authorEmail  string
-	accessToken  string
 	baseBranch   string
 	cloneUrl     string
 }
@@ -65,11 +75,12 @@ func (c *githubClient) Clone(ctx context.Context, baseBranch, branch, folder str
 		return nil, err
 	}
 
+	token, err := c.client.Client().Transport.(*ghinstallation.Transport).Token(ctx)
 	_, err = git.PlainClone(folder, false, &git.CloneOptions{
 		URL: c.cloneUrl,
-		Auth: &http.BasicAuth{
+		Auth: &plumbinghttp.BasicAuth{
 			Username: "x-access-token",
-			Password: c.accessToken,
+			Password: token,
 		},
 		ReferenceName: plumbing.NewBranchReferenceName(branch),
 	})

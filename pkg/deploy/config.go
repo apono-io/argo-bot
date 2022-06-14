@@ -6,12 +6,18 @@ type Config struct {
 }
 
 type GithubConfig struct {
-	Token        string `required:"true"`
-	Organization string `required:"true"`
-	Repository   string `required:"true"`
-	AuthorName   string `required:"true" default:"Argo Bot"`
-	AuthorEmail  string `required:"true" yaml:"author_email"`
-	CloneTmpDir  string `required:"true" default:"/tmp"`
+	Auth         GithubAuthConfig `required:"true"`
+	Organization string           `required:"true"`
+	Repository   string           `required:"true"`
+	AuthorName   string           `required:"true" default:"Argo Bot"`
+	AuthorEmail  string           `required:"true"`
+	CloneTmpDir  string           `required:"true" default:"/tmp"`
+}
+
+type GithubAuthConfig struct {
+	KeyPath        string `required:"true"`
+	AppId          int    `required:"true"`
+	InstallationId int    `required:"true"`
 }
 
 type Service struct {
