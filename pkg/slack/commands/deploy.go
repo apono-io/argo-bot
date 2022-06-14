@@ -7,7 +7,6 @@ import (
 	log "github.com/sirupsen/logrus"
 	slackgo "github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
-	"math"
 	"strconv"
 )
 
@@ -55,7 +54,14 @@ func (c *controller) handleDeploy(client *socketmode.Client, cmd slackgo.SlashCo
 		return
 	}
 
-	pr, diff, err := c.deployer.Deploy(serviceName, environment, commit)
+	user := "@" + cmd.UserName
+	profile, err := client.GetUserProfile(&slackgo.GetUserProfileParameters{UserID: cmd.UserID})
+	if err != nil {
+		ctxLogger.WithError(err).Error("Failed to get slack user profile")
+	}
+
+	user = fmt.Sprintf("%s %s (%s)", profile.FirstName, profile.LastName, profile.Email)
+	pr, diff, err := c.deployer.Deploy(serviceName, environment, commit, commitUrl, user)
 	if err != nil {
 		ctxLogger.WithError(err).Error("Failed to deploy")
 		c.sendErrorMessage(client, cmd, ctxLogger, err)
@@ -96,7 +102,7 @@ func (c *controller) requestDetailsMsgOptions(cmd slackgo.SlashCommand, serviceN
 						slackgo.NewSectionBlock(nil, []*slackgo.TextBlockObject{
 							slackgo.NewTextBlockObject(slackgo.MarkdownType, fmt.Sprintf("*Service:*\n%s", serviceName), false, false),
 							slackgo.NewTextBlockObject(slackgo.MarkdownType, fmt.Sprintf("*Environment:*\n%s", environment), false, false),
-							slackgo.NewTextBlockObject(slackgo.MarkdownType, fmt.Sprintf("*Commit:*\n<%s|%s>", commitUrl, commit[:int(math.Min(float64(len(commit)), 7))]), false, false),
+							slackgo.NewTextBlockObject(slackgo.MarkdownType, fmt.Sprintf("*Commit:*\n<%s|%s>", commitUrl, commit[:7]), false, false),
 							slackgo.NewTextBlockObject(slackgo.MarkdownType, fmt.Sprintf("*Deployer:*\n<@%s>", cmd.UserID), false, false),
 						}, nil),
 					},

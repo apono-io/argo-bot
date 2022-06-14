@@ -27,7 +27,7 @@ func NewValidationErr(err string) error {
 
 type Deployer interface {
 	GetCommitSha(ctx context.Context, serviceName, commit string) (string, string, error)
-	Deploy(serviceName, environment, commit string) (*github.PullRequest, string, error)
+	Deploy(serviceName, environment, commit, commitUrl, user string) (*github.PullRequest, string, error)
 	Approve(ctx context.Context, pullRequestId int) error
 	Cancel(ctx context.Context, pullRequestId int) error
 }
@@ -66,7 +66,7 @@ func (d *gitDeployer) Cancel(ctx context.Context, pullRequestId int) error {
 	return d.gitClient.ClosePR(ctx, pullRequestId)
 }
 
-func (d *gitDeployer) Deploy(serviceName, environmentName, commit string) (*github.PullRequest, string, error) {
+func (d *gitDeployer) Deploy(serviceName, environmentName, commit, commitUrl, user string) (*github.PullRequest, string, error) {
 	ctx := context.Background()
 	logWithCtx := log.WithFields(log.Fields{
 		"environment": environmentName,
@@ -99,7 +99,7 @@ func (d *gitDeployer) Deploy(serviceName, environmentName, commit string) (*gith
 
 	logWithCtx.Infof("Starting deployment")
 	branch := fmt.Sprintf("argo-deploy-%s-%s", serviceName, environmentName)
-	commitMsg := fmt.Sprintf("Argo Bot: Deploy %s to %s commit %s", serviceName, environmentName, commit)
+	commitMsg := fmt.Sprintf("Argo Bot: Deploy %s to %s commit %s triggered by %s", serviceName, environmentName, commit[:7], user)
 
 	baseFolder, err := ioutil.TempDir(d.config.Github.CloneTmpDir, branch+"-*")
 	if err != nil {
@@ -125,7 +125,9 @@ func (d *gitDeployer) Deploy(serviceName, environmentName, commit string) (*gith
 		return nil, "", fmt.Errorf("failed to create commit, error: %w", err)
 	}
 
-	pr, diff, err := d.gitClient.CreatePR(ctx, commitMsg, "", environment.DeploymentRepoBranch, branch)
+	prDescription := fmt.Sprintf("Service Name: %s\nEnvironment: %s\nCommit: [%s](%s)\nRequested by: %s",
+		serviceName, environmentName, commit[:7], commitUrl, user)
+	pr, diff, err := d.gitClient.CreatePR(ctx, commitMsg, prDescription, environment.DeploymentRepoBranch, branch)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create pull request, error: %w", err)
 	}
