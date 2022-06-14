@@ -16,9 +16,9 @@ builds:
     flags:
       - -trimpath
     asmflags:
-      - all=-trimpath={{.Env.PWD}}
+      - all=-trimpath={{.Env.GITHUB_WORKSPACE}}
     gcflags:
-      - all=-trimpath={{.Env.PWD}}
+      - all=-trimpath={{.Env.GITHUB_WORKSPACE}}
     ldflags:
       - -s -w -X github.com/apono-io/argo-bot/pkg/core.Version={{.Version}} -X github.com/apono-io/argo-bot/pkg/core.Commit={{.Commit}} -X github.com/apono-io/argo-bot/pkg/core.BuildDate={{.Date}}
     mod_timestamp: "{{ .CommitTimestamp }}"
