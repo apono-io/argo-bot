@@ -10,6 +10,7 @@ import (
 	"golang.org/x/oauth2"
 	"io/ioutil"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -186,6 +187,10 @@ func (c *githubClient) MergePR(ctx context.Context, id int) error {
 		return err
 	}
 
+	if pr.GetMerged() {
+		return errors.New("pull request is already merged")
+	}
+
 	_, _, err = c.client.PullRequests.Merge(ctx, c.organization, c.repository, id, "", &github.PullRequestOptions{MergeMethod: "squash"})
 	if err != nil {
 		return err
@@ -198,6 +203,10 @@ func (c *githubClient) ClosePR(ctx context.Context, id int) error {
 	pr, _, err := c.client.PullRequests.Get(ctx, c.organization, c.repository, id)
 	if err != nil {
 		return err
+	}
+
+	if pr.GetMerged() {
+		return errors.New("pull request is already merged")
 	}
 
 	pr.State = github.String("closed")
@@ -236,5 +245,9 @@ func (c *githubClient) CommitInBranch(ctx context.Context, organization, reposit
 
 func (c *githubClient) deleteBranch(ctx context.Context, branchName string) error {
 	_, err := c.client.Git.DeleteRef(ctx, c.organization, c.repository, "heads/"+branchName)
+	if strings.Contains(err.Error(), "Reference does not exist") {
+		return nil
+	}
+
 	return err
 }

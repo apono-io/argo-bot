@@ -13,6 +13,18 @@ import (
 	"text/template"
 )
 
+type ValidationErr struct {
+	Err error
+}
+
+func (e ValidationErr) Error() string {
+	return e.Err.Error()
+}
+
+func NewValidationErr(err string) error {
+	return ValidationErr{Err: errors.New(err)}
+}
+
 type Deployer interface {
 	GetCommitSha(ctx context.Context, serviceName, commit string) (string, string, error)
 	Deploy(serviceName, environment, commit string) (*github.PullRequest, string, error)
@@ -81,7 +93,7 @@ func (d *gitDeployer) Deploy(serviceName, environmentName, commit string) (*gith
 		}
 
 		if !validBranch {
-			return nil, "", errors.New("commit is not in allowed branches")
+			return nil, "", NewValidationErr("commit is not in allowed branches")
 		}
 	}
 
@@ -188,7 +200,7 @@ func (d *gitDeployer) LookupService(name string) (*Service, error) {
 			return &service, nil
 		}
 	}
-	return nil, errors.New("service not found")
+	return nil, NewValidationErr("service not found")
 }
 
 func (d *gitDeployer) LookupEnvironment(service *Service, name string) (*ServiceEnvironment, error) {
@@ -197,7 +209,7 @@ func (d *gitDeployer) LookupEnvironment(service *Service, name string) (*Service
 			return &environment, nil
 		}
 	}
-	return nil, errors.New("environment not found")
+	return nil, NewValidationErr("environment not found")
 }
 
 func (d *gitDeployer) renderTemplateFile(absolutePath string, tmpl *template.Template, templateName string, opts options) error {
