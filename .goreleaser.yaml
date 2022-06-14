@@ -13,10 +13,15 @@ builds:
     goarch:
       - amd64
       - arm64
+    flags:
+      - -trimpath
+    asmflags:
+      - all=-trimpath={{.Env.GOPATH}} -trimpath={{.Env.PWD}}
+    gcflags:
+      - all=-trimpath={{.Env.GOPATH}} -trimpath={{.Env.PWD}}
     ldflags:
       - -s -w -X github.com/apono-io/argo-bot/pkg/core.Version={{.Version}} -X github.com/apono-io/argo-bot/pkg/core.Commit={{.Commit}} -X github.com/apono-io/argo-bot/pkg/core.BuildDate={{.Date}}
     mod_timestamp: "{{ .CommitTimestamp }}"
-archives: []
 dockers:
   - goos: linux
     goarch: amd64
