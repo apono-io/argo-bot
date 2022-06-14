@@ -19,14 +19,14 @@ RUN adduser \
     --uid "${UID}" \
     "${USER}"
 
-RUN mkdir /apptmp
+RUN chown appuser:appuser /tmp
 
 FROM scratch
 
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /etc/passwd /etc/passwd
 COPY --from=builder /etc/group /etc/group
-COPY --from=builder --chown=appuser:appuser /apptmp /apptmp
+COPY --from=builder --chown=appuser:appuser /tmp /tmp
 
 COPY argo-bot /app/argo-bot
 

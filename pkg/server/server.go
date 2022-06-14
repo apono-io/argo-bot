@@ -1,8 +1,8 @@
 package server
 
 import (
+	"fmt"
 	"github.com/apono-io/argo-bot/pkg/config"
-	"github.com/apono-io/argo-bot/pkg/logging"
 	"github.com/apono-io/argo-bot/pkg/slack"
 	"github.com/form3tech-oss/logrus-logzio-hook/pkg/hook"
 	"github.com/logzio/logzio-go"
@@ -16,12 +16,11 @@ func Run(config config.Config) error {
 		DisableColors: true,
 	}
 
-	formatter := logging.NewLogTypeFormatter(textFormatter, loggingCfg.LogType)
-	log.SetFormatter(formatter)
+	log.SetFormatter(textFormatter)
 	log.SetReportCaller(true)
 
 	if loggingCfg.LogzioListenerAddress != "" && loggingCfg.LogzioLoggingToken != "" {
-		sender, err := logzio.New(loggingCfg.LogzioLoggingToken,
+		sender, err := logzio.New(fmt.Sprintf("%s&type=%s", loggingCfg.LogzioLoggingToken, "argo-bot"),
 			logzio.SetUrl(loggingCfg.LogzioListenerAddress),
 		)
 		if err != nil {
