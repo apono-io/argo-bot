@@ -234,7 +234,7 @@ func (c *githubClient) CommitInBranch(ctx context.Context, organization, reposit
 			return false, err
 		}
 
-		commitInBranch := *commits.Status == "behind" || *commits.Status == "identical"
+		commitInBranch := *commits.Status == "ahead" || *commits.Status == "identical"
 		if commitInBranch {
 			return true, nil
 		}
@@ -245,7 +245,7 @@ func (c *githubClient) CommitInBranch(ctx context.Context, organization, reposit
 
 func (c *githubClient) deleteBranch(ctx context.Context, branchName string) error {
 	_, err := c.client.Git.DeleteRef(ctx, c.organization, c.repository, "heads/"+branchName)
-	if strings.Contains(err.Error(), "Reference does not exist") {
+	if err != nil && strings.Contains(err.Error(), "Reference does not exist") {
 		return nil
 	}
 

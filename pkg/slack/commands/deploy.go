@@ -114,6 +114,11 @@ func (c *controller) sendApprovalMessage(client *socketmode.Client, slashCommand
 	rejectBtn := slackgo.NewButtonBlockElement(deploymentDenyActionId, strconv.Itoa(prNumber), slackgo.NewTextBlockObject(slackgo.PlainTextType, "Deny", false, false))
 	rejectBtn.Style = slackgo.StyleDanger
 
+	diffText := fmt.Sprintf("```%s```", diff)
+	if diff == "" {
+		diffText = "_Nothing to change, merging this PR will only create empty commit_"
+	}
+
 	_, _, _, err := client.SendMessage(slashCommandEvent.ChannelID,
 		slackgo.MsgOptionText("Going to deploy the following change to the deployment repository", false),
 		slackgo.MsgOptionAttachments(
@@ -121,7 +126,7 @@ func (c *controller) sendApprovalMessage(client *socketmode.Client, slashCommand
 				Color: grayColor,
 				Blocks: slackgo.Blocks{
 					BlockSet: []slackgo.Block{
-						slackgo.NewSectionBlock(slackgo.NewTextBlockObject(slackgo.MarkdownType, fmt.Sprintf("```%s```", diff), false, false), nil, nil),
+						slackgo.NewSectionBlock(slackgo.NewTextBlockObject(slackgo.MarkdownType, diffText, false, false), nil, nil),
 						slackgo.NewActionBlock("",
 							approveBtn,
 							rejectBtn,
