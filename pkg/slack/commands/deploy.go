@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/apono-io/argo-bot/pkg/deploy"
+	"github.com/google/go-github/v45/github"
 	log "github.com/sirupsen/logrus"
 	slackgo "github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
@@ -19,6 +20,8 @@ var (
 	darkPurpleColor  = "#8256d0"
 	lightRedColor    = "#d16460"
 	darkRedColor     = "#c93c37"
+
+	textBlockMaxLength = 3000
 )
 
 func (c *controller) handleDeploy(client *socketmode.Client, cmd slackgo.SlashCommand, args []string) {
@@ -68,7 +71,7 @@ func (c *controller) handleDeploy(client *socketmode.Client, cmd slackgo.SlashCo
 		return
 	}
 
-	c.sendApprovalMessage(client, cmd, ctxLogger, pr.GetNumber(), diff)
+	c.sendApprovalMessage(client, cmd, ctxLogger, pr, diff)
 }
 
 func (c *controller) sendHelpResponse(client *socketmode.Client, slashCommandEvent slackgo.SlashCommand, ctxLogger *log.Entry) {
@@ -113,14 +116,15 @@ func (c *controller) requestDetailsMsgOptions(cmd slackgo.SlashCommand, serviceN
 	}
 }
 
-func (c *controller) sendApprovalMessage(client *socketmode.Client, slashCommandEvent slackgo.SlashCommand, ctxLogger *log.Entry, prNumber int, diff string) {
+func (c *controller) sendApprovalMessage(client *socketmode.Client, slashCommandEvent slackgo.SlashCommand, ctxLogger *log.Entry, pr *github.PullRequest, diff string) {
+	prNumber := pr.GetNumber()
 	approveBtn := slackgo.NewButtonBlockElement(deploymentApproveActionId, strconv.Itoa(prNumber), slackgo.NewTextBlockObject(slackgo.PlainTextType, "Approve", false, false))
 	approveBtn.Style = slackgo.StylePrimary
 
 	rejectBtn := slackgo.NewButtonBlockElement(deploymentDenyActionId, strconv.Itoa(prNumber), slackgo.NewTextBlockObject(slackgo.PlainTextType, "Deny", false, false))
 	rejectBtn.Style = slackgo.StyleDanger
 
-	diffText := fmt.Sprintf("```%s```", diff)
+	diffText := fmt.Sprintf("```%s```", c.truncateDiff(diff, textBlockMaxLength-6))
 	if diff == "" {
 		diffText = "_Nothing to change, merging this PR will only create empty commit_"
 	}
@@ -133,6 +137,7 @@ func (c *controller) sendApprovalMessage(client *socketmode.Client, slashCommand
 				Blocks: slackgo.Blocks{
 					BlockSet: []slackgo.Block{
 						slackgo.NewSectionBlock(slackgo.NewTextBlockObject(slackgo.MarkdownType, diffText, false, false), nil, nil),
+						slackgo.NewSectionBlock(slackgo.NewTextBlockObject(slackgo.MarkdownType, fmt.Sprintf("[Original pull request](%s)", pr.GetHTMLURL()), false, false), nil, nil),
 						slackgo.NewActionBlock("",
 							approveBtn,
 							rejectBtn,
@@ -279,4 +284,13 @@ func (c *controller) sendErrorMessage(client *socketmode.Client, slashCommandEve
 			WithError(err).
 			Error("Failed to send message to user")
 	}
+}
+
+func (c *controller) truncateDiff(text string, width int) string {
+	if len(text) <= width {
+		return text
+	}
+
+	text = string([]byte(text)[:width-3])
+	return fmt.Sprintf("%s...", text)
 }

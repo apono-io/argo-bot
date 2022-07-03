@@ -3,6 +3,7 @@ package deploy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -232,6 +233,12 @@ func (c *githubClient) ClosePR(ctx context.Context, id int) error {
 func (c *githubClient) GetCommitSha(ctx context.Context, organization, repository, commit string) (string, string, error) {
 	ghCommit, _, err := c.client.Repositories.GetCommit(ctx, organization, repository, commit, &github.ListOptions{})
 	if err != nil {
+		if err, ok := err.(*github.ErrorResponse); ok {
+			if err.Response.StatusCode == http.StatusNotFound {
+				return "", "", fmt.Errorf("unable to find commit: %s", commit)
+			}
+		}
+
 		return "", "", err
 	}
 
@@ -242,6 +249,12 @@ func (c *githubClient) CommitInBranch(ctx context.Context, organization, reposit
 	for _, branch := range branches {
 		commits, _, err := c.client.Repositories.CompareCommits(ctx, organization, repository, commit, branch, &github.ListOptions{})
 		if err != nil {
+			if err, ok := err.(*github.ErrorResponse); ok {
+				if err.Response.StatusCode == http.StatusNotFound {
+					continue
+				}
+			}
+
 			return false, err
 		}
 
