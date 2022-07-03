@@ -234,7 +234,7 @@ func (c *githubClient) GetCommitSha(ctx context.Context, organization, repositor
 	ghCommit, _, err := c.client.Repositories.GetCommit(ctx, organization, repository, commit, &github.ListOptions{})
 	if err != nil {
 		if err, ok := err.(*github.ErrorResponse); ok {
-			if err.Response.StatusCode == http.StatusNotFound {
+			if err.Response.StatusCode == http.StatusUnprocessableEntity {
 				return "", "", fmt.Errorf("unable to find commit: %s", commit)
 			}
 		}

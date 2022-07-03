@@ -137,7 +137,7 @@ func (c *controller) sendApprovalMessage(client *socketmode.Client, slashCommand
 				Blocks: slackgo.Blocks{
 					BlockSet: []slackgo.Block{
 						slackgo.NewSectionBlock(slackgo.NewTextBlockObject(slackgo.MarkdownType, diffText, false, false), nil, nil),
-						slackgo.NewSectionBlock(slackgo.NewTextBlockObject(slackgo.MarkdownType, fmt.Sprintf("[Original pull request](%s)", pr.GetHTMLURL()), false, false), nil, nil),
+						slackgo.NewSectionBlock(slackgo.NewTextBlockObject(slackgo.MarkdownType, fmt.Sprintf("<%s|Original pull request>", pr.GetHTMLURL()), false, false), nil, nil),
 						slackgo.NewActionBlock("",
 							approveBtn,
 							rejectBtn,
