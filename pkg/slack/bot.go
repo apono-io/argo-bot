@@ -12,7 +12,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	slackgo "github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
-	stdlog "log"
+	"strings"
 )
 
 type Bot interface {
@@ -20,39 +20,36 @@ type Bot interface {
 }
 
 func New(config Config, deployConfig deploy.Config) (Bot, error) {
-	client := slackgo.New(config.BotToken,
-		slackgo.OptionAppLevelToken(config.AppToken),
-		slackgo.OptionLog(stdlog.New(log.StandardLogger().Out, "api: ", stdlog.Lshortfile|stdlog.LstdFlags)),
+	slackerBot := slacker.NewClient(config.BotToken, config.AppToken,
+		slacker.WithDebug(false),
 	)
 
-	socketmodeClient := socketmode.New(client,
-		socketmode.OptionLog(stdlog.New(log.StandardLogger().Out, "socketmode: ", stdlog.Lshortfile|stdlog.LstdFlags)),
-	)
-
-	slackerBot := slacker.NewClient(config.BotToken, config.AppToken, slacker.WithDebug(true))
 	return &bot{
-		client:           client,
-		socketmodeClient: socketmodeClient,
-		deployConfig:     deployConfig,
-		slackerBot:       slackerBot,
+		deployConfig: deployConfig,
+		slackerBot:   slackerBot,
 	}, nil
 }
 
 type bot struct {
-	client           *slackgo.Client
-	socketmodeClient *socketmode.Client
-	deployConfig     deploy.Config
-	slackerBot       *slacker.Slacker
+	deployConfig      deploy.Config
+	slackerBot        *slacker.Slacker
+	botName           string
+	botUserId         string
+	botMentionPattern string
 }
 
 func (b *bot) Run() error {
-	b.slackerBot.CustomCommand(func(usage string, definition *slacker.CommandDefinition) slacker.BotCommand {
-		return &cmd{
-			usage:      usage,
-			definition: definition,
-			command:    allot.New(fmt.Sprintf("argo-local %s", usage)),
-		}
-	})
+	authInfo, err := b.slackerBot.Client().AuthTest()
+	if err != nil {
+		return err
+	}
+
+	b.botName = authInfo.User
+	b.botUserId = authInfo.UserID
+	b.botMentionPattern = fmt.Sprintf("<@%s>", b.botUserId)
+
+	b.slackerBot.CustomCommand(b.constructCommand)
+	b.slackerBot.CustomBotContext(b.constructBotContext)
 
 	d, err := deploy.New(b.deployConfig)
 	if err != nil {
@@ -64,6 +61,24 @@ func (b *bot) Run() error {
 	defer cancel()
 
 	return b.slackerBot.Listen(ctx)
+}
+
+func (b *bot) constructCommand(usage string, definition *slacker.CommandDefinition) slacker.BotCommand {
+	return &cmd{
+		usage:      usage,
+		definition: definition,
+		command:    allot.New(fmt.Sprintf("%s %s", b.botName, usage)),
+	}
+}
+
+func (b *bot) constructBotContext(ctx context.Context, client *slackgo.Client, socketmode *socketmode.Client, evt *slacker.MessageEvent) slacker.BotContext {
+	if evt.Channel[0] == 'D' && strings.Index(evt.Text, b.botName) != 0 {
+		evt.Text = fmt.Sprintf("%s %s", b.botName, strings.TrimSpace(evt.Text))
+	} else if strings.Index(evt.Text, b.botMentionPattern) != 0 {
+		evt.Text = strings.Replace(evt.Text, b.botMentionPattern, b.botName, 1)
+	}
+
+	return slacker.NewBotContext(ctx, client, socketmode, evt)
 }
 
 type cmd struct {
