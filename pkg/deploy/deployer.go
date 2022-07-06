@@ -202,7 +202,7 @@ func (d *gitDeployer) LookupService(name string) (*Service, error) {
 			return &service, nil
 		}
 	}
-	return nil, NewValidationErr("service not found")
+	return nil, NewValidationErr("service does not exist")
 }
 
 func (d *gitDeployer) LookupEnvironment(service *Service, name string) (*ServiceEnvironment, error) {
@@ -211,7 +211,7 @@ func (d *gitDeployer) LookupEnvironment(service *Service, name string) (*Service
 			return &environment, nil
 		}
 	}
-	return nil, NewValidationErr("environment not found")
+	return nil, NewValidationErr("environment does not exist")
 }
 
 func (d *gitDeployer) renderTemplateFile(absolutePath string, tmpl *template.Template, templateName string, opts options) error {

@@ -11,8 +11,12 @@ require (
 	github.com/go-git/go-git/v5 v5.4.2
 	github.com/google/go-github/v45 v45.1.0
 	github.com/logzio/logzio-go v1.0.6
+	github.com/sbstjn/allot v0.0.0-20161025071122-1f2349af5ccd
+	github.com/shomali11/commander v0.0.0-20191122162317-51bc574c29ba
+	github.com/shomali11/proper v0.0.0-20180607004733-233a9a872c30
+	github.com/shomali11/slacker v0.1.0
 	github.com/sirupsen/logrus v1.8.1
-	github.com/slack-go/slack v0.10.4-0.20220606002947-9fd6da5aee56
+	github.com/slack-go/slack v0.11.0
 )
 
 require (

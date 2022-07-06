@@ -1,12 +1,18 @@
 package slack
 
 import (
+	"context"
+	"fmt"
 	"github.com/apono-io/argo-bot/pkg/deploy"
 	"github.com/apono-io/argo-bot/pkg/slack/commands"
+	"github.com/sbstjn/allot"
+	"github.com/shomali11/commander"
+	"github.com/shomali11/proper"
+	"github.com/shomali11/slacker"
 	log "github.com/sirupsen/logrus"
 	slackgo "github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
-	stdlog "log"
+	"strings"
 )
 
 type Bot interface {
@@ -14,63 +20,120 @@ type Bot interface {
 }
 
 func New(config Config, deployConfig deploy.Config) (Bot, error) {
-	client := slackgo.New(config.BotToken,
-		slackgo.OptionAppLevelToken(config.AppToken),
-		slackgo.OptionLog(stdlog.New(log.StandardLogger().Out, "api: ", stdlog.Lshortfile|stdlog.LstdFlags)),
-	)
-
-	socketmodeClient := socketmode.New(client,
-		socketmode.OptionLog(stdlog.New(log.StandardLogger().Out, "socketmode: ", stdlog.Lshortfile|stdlog.LstdFlags)),
+	slackerBot := slacker.NewClient(config.BotToken, config.AppToken,
+		slacker.WithDebug(false),
 	)
 
 	return &bot{
-		client:           client,
-		socketmodeClient: socketmodeClient,
-		deployConfig:     deployConfig,
+		deployConfig: deployConfig,
+		slackerBot:   slackerBot,
 	}, nil
 }
 
 type bot struct {
-	client           *slackgo.Client
-	socketmodeClient *socketmode.Client
-	deployConfig     deploy.Config
+	deployConfig      deploy.Config
+	slackerBot        *slacker.Slacker
+	botName           string
+	botUserId         string
+	botMentionPattern string
 }
 
 func (b *bot) Run() error {
-	socketmodeHandler := socketmode.NewSocketmodeHandler(b.socketmodeClient)
+	authInfo, err := b.slackerBot.Client().AuthTest()
+	if err != nil {
+		return err
+	}
 
-	socketmodeHandler.Handle(socketmode.EventTypeConnecting, b.middlewareConnecting)
-	socketmodeHandler.Handle(socketmode.EventTypeConnectionError, b.middlewareConnectionError)
-	socketmodeHandler.Handle(socketmode.EventTypeConnected, b.middlewareConnected)
-	socketmodeHandler.Handle(socketmode.EventTypeHello, b.middlewareNoop)
+	b.botName = authInfo.User
+	b.botUserId = authInfo.UserID
+	b.botMentionPattern = fmt.Sprintf("<@%s>", b.botUserId)
+
+	b.slackerBot.CustomCommand(b.constructCommand)
+	b.slackerBot.CustomBotContext(b.constructBotContext)
 
 	d, err := deploy.New(b.deployConfig)
 	if err != nil {
 		return err
 	}
-	commands.RegisterCommandHandlers(socketmodeHandler, d)
 
-	socketmodeHandler.HandleDefault(b.middlewareDefault)
+	commands.RegisterCommandHandlers(b.slackerBot, d)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	return socketmodeHandler.RunEventLoop()
+	return b.slackerBot.Listen(ctx)
 }
 
-func (b *bot) middlewareConnecting(_ *socketmode.Event, _ *socketmode.Client) {
-	log.Info("Connecting to Slack with Socket Mode...")
+func (b *bot) constructCommand(usage string, definition *slacker.CommandDefinition) slacker.BotCommand {
+	return &cmd{
+		usage:      usage,
+		definition: definition,
+		command:    allot.New(fmt.Sprintf("%s %s", b.botName, usage)),
+	}
 }
 
-func (b *bot) middlewareConnectionError(_ *socketmode.Event, _ *socketmode.Client) {
-	log.Error("Connection failed. Retrying later...")
+func (b *bot) constructBotContext(ctx context.Context, client *slackgo.Client, socketmode *socketmode.Client, evt *slacker.MessageEvent) slacker.BotContext {
+	if evt.Channel[0] == 'D' && strings.Index(evt.Text, b.botName) != 0 {
+		evt.Text = fmt.Sprintf("%s %s", b.botName, strings.TrimSpace(evt.Text))
+	} else if strings.Index(evt.Text, b.botMentionPattern) != 0 {
+		evt.Text = strings.Replace(evt.Text, b.botMentionPattern, b.botName, 1)
+	}
+
+	return slacker.NewBotContext(ctx, client, socketmode, evt)
 }
 
-func (b *bot) middlewareConnected(_ *socketmode.Event, _ *socketmode.Client) {
-	log.Info("Connected to Slack with Socket Mode.")
+type cmd struct {
+	usage      string
+	definition *slacker.CommandDefinition
+	command    allot.Command
+	tokens     []*commander.Token
 }
 
-func (b *bot) middlewareDefault(evt *socketmode.Event, _ *socketmode.Client) {
-	log.WithField("event", evt.Data).Warn("Unexpected event type received:", evt.Type)
+func (c *cmd) Usage() string {
+	return c.usage
 }
 
-func (b *bot) middlewareNoop(evt *socketmode.Event, _ *socketmode.Client) {
-	log.Debug("Ignoring event of type: ", evt.Type)
+func (c *cmd) Definition() *slacker.CommandDefinition {
+	return c.definition
+}
+
+func (c *cmd) Match(text string) (*proper.Properties, bool) {
+	match, err := c.command.Match(text)
+	if err != nil {
+		return nil, false
+	}
+
+	m := make(map[string]string)
+	for _, param := range c.command.Parameters() {
+		val, _ := match.Parameter(param)
+		m[param.Name()] = val
+	}
+
+	return proper.NewProperties(m), true
+}
+
+func (c *cmd) Tokenize() []*commander.Token {
+	return c.tokens
+}
+
+func (c *cmd) Execute(botCtx slacker.BotContext, request slacker.Request, response slacker.ResponseWriter) {
+	log.Printf("Executing command [%s] invoked by %s", c.usage, botCtx.Event().User)
+	c.definition.Handler(botCtx, request, response)
+}
+
+func (c *cmd) Interactive(slacker *slacker.Slacker, evt *socketmode.Event, callback *slackgo.InteractionCallback, req *socketmode.Request) {
+	if c.definition == nil || c.definition.Interactive == nil {
+		return
+	}
+	c.definition.Interactive(slacker, evt, callback, req)
+}
+
+func (c cmd) tokenize() {
+	params := c.command.Parameters()
+	c.tokens = make([]*commander.Token, len(params))
+	for i, param := range params {
+		c.tokens[i] = &commander.Token{
+			Word: param.Name(),
+			Type: 1,
+		}
+	}
 }

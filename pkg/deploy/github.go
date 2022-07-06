@@ -3,7 +3,6 @@ package deploy
 import (
 	"context"
 	"errors"
-	"fmt"
 	"github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -235,7 +234,7 @@ func (c *githubClient) GetCommitSha(ctx context.Context, organization, repositor
 	if err != nil {
 		if err, ok := err.(*github.ErrorResponse); ok {
 			if err.Response.StatusCode == http.StatusUnprocessableEntity {
-				return "", "", fmt.Errorf("unable to find commit: %s", commit)
+				return "", "", NewValidationErr("commit does not exist")
 			}
 		}
 
