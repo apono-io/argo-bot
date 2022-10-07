@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/apono-io/argo-bot/pkg/deploy"
-	"github.com/google/go-github/v45/github"
+	"github.com/apono-io/argo-bot/pkg/api"
+	"github.com/apono-io/argo-bot/pkg/github"
 	"github.com/shomali11/slacker"
 	log "github.com/sirupsen/logrus"
 	slackgo "github.com/slack-go/slack"
@@ -133,7 +133,7 @@ func (c *controller) messageWithRequestDetails(requestDetailsColor string, statu
 }
 
 func (c *controller) sendApprovalMessage(botCtx slacker.BotContext, req deploymentRequest, ctxLogger *log.Entry, pr *github.PullRequest, diff string) {
-	req.PrNumber = pr.GetNumber()
+	req.PrNumber = pr.Id
 	bytes, err := json.Marshal(req)
 	if err != nil {
 		ctxLogger.WithField("slackUserId", botCtx.Event().User).
@@ -158,7 +158,7 @@ func (c *controller) sendApprovalMessage(botCtx slacker.BotContext, req deployme
 	_, _, _, err = botCtx.SocketMode().UpdateMessage(*req.Channel, *req.Timestamp,
 		c.messageWithRequestDetails(lightBlueColor, noStatus, req,
 			slackgo.NewSectionBlock(slackgo.NewTextBlockObject(slackgo.MarkdownType, diffText, false, false), nil, nil),
-			slackgo.NewContextBlock("", slackgo.NewTextBlockObject(slackgo.MarkdownType, fmt.Sprintf("<%s|Original pull request>", pr.GetHTMLURL()), false, false)),
+			slackgo.NewContextBlock("", slackgo.NewTextBlockObject(slackgo.MarkdownType, fmt.Sprintf("<%s|Original pull request>", pr.Link), false, false)),
 			slackgo.NewActionBlock(deploymentApprovalBlockId,
 				approveBtn,
 				rejectBtn,
@@ -246,7 +246,7 @@ func (c *controller) updateMessage(client *socketmode.Client, callback *slackgo.
 
 func (c *controller) sendErrorMessage(botCtx slacker.BotContext, ctxLogger *log.Entry, req deploymentRequest, executionErr error) {
 	var errorMsg string
-	if validationErr, ok := executionErr.(deploy.ValidationErr); ok {
+	if validationErr, ok := executionErr.(api.ValidationErr); ok {
 		errorMsg = fmt.Sprintf("Validation error: %s", validationErr.Error())
 	} else {
 		errorMsg = fmt.Sprintf("Error: %s", executionErr.Error())

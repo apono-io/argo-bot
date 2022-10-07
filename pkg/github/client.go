@@ -1,4 +1,4 @@
-package deploy
+package github
 
 import (
 	"archive/tar"
@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/apono-io/argo-bot/pkg/api"
 	"github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-github/v45/github"
 	log "github.com/sirupsen/logrus"
@@ -19,20 +20,20 @@ import (
 	"time"
 )
 
-type GitClient interface {
+type Client interface {
 	Clone(ctx context.Context, baseBranch, branch, folder string) (*github.Reference, error)
 	GetRef(ctx context.Context, baseBranch, branch string) (*github.Reference, error)
 	CreateTree(ctx context.Context, ref *github.Reference, baseFolder string, files []string) (tree *github.Tree, err error)
 	PushCommit(ctx context.Context, ref *github.Reference, tree *github.Tree, commitMessage string) (err error)
-	CreatePR(ctx context.Context, title, description, baseBranch, branch string) (*github.PullRequest, string, error)
+	CreatePR(ctx context.Context, title, description, baseBranch, branch string) (*PullRequest, string, error)
 	MergePR(ctx context.Context, id int) error
 	ClosePR(ctx context.Context, id int) error
 	GetCommitSha(ctx context.Context, organization, repository, commit string) (string, string, error)
 	CommitInBranch(ctx context.Context, organization, repository, commit string, branches []string) (bool, error)
 }
 
-func NewGithubClient(ctx context.Context, config GithubConfig) (GitClient, error) {
-	client, err := createGithubClient(config.Auth)
+func NewClient(ctx context.Context, config Config) (Client, error) {
+	client, err := createApiClient(config.Auth)
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +43,7 @@ func NewGithubClient(ctx context.Context, config GithubConfig) (GitClient, error
 		return nil, err
 	}
 
-	return &githubClient{
+	return &apiClient{
 		client:       client,
 		organization: config.Organization,
 		repository:   config.Repository,
@@ -53,7 +54,7 @@ func NewGithubClient(ctx context.Context, config GithubConfig) (GitClient, error
 	}, nil
 }
 
-func createGithubClient(authConfig GithubAuthConfig) (*github.Client, error) {
+func createApiClient(authConfig AuthConfig) (*github.Client, error) {
 	tr := http.DefaultTransport
 	itr, err := ghinstallation.NewKeyFromFile(tr, int64(authConfig.AppId), int64(authConfig.InstallationId), authConfig.KeyPath)
 	if err != nil {
@@ -63,7 +64,7 @@ func createGithubClient(authConfig GithubAuthConfig) (*github.Client, error) {
 	return github.NewClient(&http.Client{Transport: itr}), nil
 }
 
-type githubClient struct {
+type apiClient struct {
 	client       *github.Client
 	organization string
 	repository   string
@@ -73,7 +74,7 @@ type githubClient struct {
 	cloneUrl     string
 }
 
-func (c *githubClient) Clone(ctx context.Context, baseBranch, branch, folder string) (*github.Reference, error) {
+func (c *apiClient) Clone(ctx context.Context, baseBranch, branch, folder string) (*github.Reference, error) {
 	ref, err := c.GetRef(ctx, baseBranch, branch)
 	if err != nil {
 		return nil, err
@@ -110,7 +111,7 @@ func (c *githubClient) Clone(ctx context.Context, baseBranch, branch, folder str
 	return ref, nil
 }
 
-func (c *githubClient) GetRef(ctx context.Context, baseBranch, branch string) (*github.Reference, error) {
+func (c *apiClient) GetRef(ctx context.Context, baseBranch, branch string) (*github.Reference, error) {
 	if baseBranch == "" {
 		baseBranch = c.baseBranch
 	}
@@ -138,7 +139,7 @@ func (c *githubClient) GetRef(ctx context.Context, baseBranch, branch string) (*
 	return ref, err
 }
 
-func (c *githubClient) CreateTree(ctx context.Context, ref *github.Reference, baseFolder string, files []string) (tree *github.Tree, err error) {
+func (c *apiClient) CreateTree(ctx context.Context, ref *github.Reference, baseFolder string, files []string) (tree *github.Tree, err error) {
 	// Create a tree with what to commit.
 	var entries []*github.TreeEntry
 
@@ -161,7 +162,7 @@ func (c *githubClient) CreateTree(ctx context.Context, ref *github.Reference, ba
 	return tree, err
 }
 
-func (c *githubClient) PushCommit(ctx context.Context, ref *github.Reference, tree *github.Tree, commitMessage string) (err error) {
+func (c *apiClient) PushCommit(ctx context.Context, ref *github.Reference, tree *github.Tree, commitMessage string) (err error) {
 	// Get the parent commit to attach the commit to.
 	parent, _, err := c.client.Repositories.GetCommit(ctx, c.organization, c.repository, *ref.Object.SHA, nil)
 	if err != nil {
@@ -185,7 +186,7 @@ func (c *githubClient) PushCommit(ctx context.Context, ref *github.Reference, tr
 	return err
 }
 
-func (c *githubClient) CreatePR(ctx context.Context, title, description, baseBranch, branch string) (*github.PullRequest, string, error) {
+func (c *apiClient) CreatePR(ctx context.Context, title, description, baseBranch, branch string) (*PullRequest, string, error) {
 	if baseBranch == "" {
 		baseBranch = c.baseBranch
 	}
@@ -207,10 +208,10 @@ func (c *githubClient) CreatePR(ctx context.Context, title, description, baseBra
 		return nil, "", err
 	}
 
-	return pr, diff, nil
+	return &PullRequest{Id: pr.GetNumber(), Link: pr.GetHTMLURL()}, diff, nil
 }
 
-func (c *githubClient) MergePR(ctx context.Context, id int) error {
+func (c *apiClient) MergePR(ctx context.Context, id int) error {
 	pr, _, err := c.client.PullRequests.Get(ctx, c.organization, c.repository, id)
 	if err != nil {
 		return err
@@ -228,7 +229,7 @@ func (c *githubClient) MergePR(ctx context.Context, id int) error {
 	return c.deleteBranch(ctx, *pr.Head.Ref)
 }
 
-func (c *githubClient) ClosePR(ctx context.Context, id int) error {
+func (c *apiClient) ClosePR(ctx context.Context, id int) error {
 	pr, _, err := c.client.PullRequests.Get(ctx, c.organization, c.repository, id)
 	if err != nil {
 		return err
@@ -247,12 +248,12 @@ func (c *githubClient) ClosePR(ctx context.Context, id int) error {
 	return c.deleteBranch(ctx, *pr.Head.Ref)
 }
 
-func (c *githubClient) GetCommitSha(ctx context.Context, organization, repository, commit string) (string, string, error) {
+func (c *apiClient) GetCommitSha(ctx context.Context, organization, repository, commit string) (string, string, error) {
 	ghCommit, _, err := c.client.Repositories.GetCommit(ctx, organization, repository, commit, &github.ListOptions{})
 	if err != nil {
 		if err, ok := err.(*github.ErrorResponse); ok {
 			if err.Response.StatusCode == http.StatusUnprocessableEntity {
-				return "", "", NewValidationErr("commit does not exist")
+				return "", "", api.NewValidationErr("commit does not exist")
 			}
 		}
 
@@ -262,7 +263,7 @@ func (c *githubClient) GetCommitSha(ctx context.Context, organization, repositor
 	return ghCommit.GetSHA(), ghCommit.GetHTMLURL(), nil
 }
 
-func (c *githubClient) CommitInBranch(ctx context.Context, organization, repository, commit string, branches []string) (bool, error) {
+func (c *apiClient) CommitInBranch(ctx context.Context, organization, repository, commit string, branches []string) (bool, error) {
 	for _, branch := range branches {
 		commits, _, err := c.client.Repositories.CompareCommits(ctx, organization, repository, commit, branch, &github.ListOptions{})
 		if err != nil {
@@ -284,7 +285,7 @@ func (c *githubClient) CommitInBranch(ctx context.Context, organization, reposit
 	return false, nil
 }
 
-func (c *githubClient) deleteBranch(ctx context.Context, branchName string) error {
+func (c *apiClient) deleteBranch(ctx context.Context, branchName string) error {
 	_, err := c.client.Git.DeleteRef(ctx, c.organization, c.repository, "heads/"+branchName)
 	if err != nil && strings.Contains(err.Error(), "Reference does not exist") {
 		return nil
@@ -293,7 +294,7 @@ func (c *githubClient) deleteBranch(ctx context.Context, branchName string) erro
 	return err
 }
 
-func (c *githubClient) extractTarGz(targetPath string, gzipStream io.Reader) error {
+func (c *apiClient) extractTarGz(targetPath string, gzipStream io.Reader) error {
 	uncompressedStream, err := gzip.NewReader(gzipStream)
 	if err != nil {
 		return fmt.Errorf("failed to create gzip reader, error: %w", err)
@@ -331,7 +332,7 @@ func (c *githubClient) extractTarGz(targetPath string, gzipStream io.Reader) err
 	return nil
 }
 
-func (c *githubClient) createFile(targetPath string, header *tar.Header, tarReader *tar.Reader) error {
+func (c *apiClient) createFile(targetPath string, header *tar.Header, tarReader *tar.Reader) error {
 	fullPath := path.Join(targetPath, c.removeFirstPathPart(header.Name))
 	err := os.MkdirAll(path.Dir(fullPath), 0755)
 	if err != nil {
@@ -357,7 +358,7 @@ func (c *githubClient) createFile(targetPath string, header *tar.Header, tarRead
 	return nil
 }
 
-func (c *githubClient) removeFirstPathPart(name string) string {
+func (c *apiClient) removeFirstPathPart(name string) string {
 	firstPathSeparatorIdx := strings.Index(name, "/")
 	if firstPathSeparatorIdx == -1 {
 		return name

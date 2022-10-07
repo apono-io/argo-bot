@@ -1,23 +1,10 @@
 package deploy
 
+import "github.com/apono-io/argo-bot/pkg/github"
+
 type Config struct {
-	Github   GithubConfig
+	Github   github.Config
 	Services []Service
-}
-
-type GithubConfig struct {
-	Auth         GithubAuthConfig `required:"true"`
-	Organization string           `required:"true"`
-	Repository   string           `required:"true"`
-	AuthorName   string           `required:"true" default:"Argo Bot"`
-	AuthorEmail  string           `required:"true"`
-	CloneTmpDir  string           `required:"true" default:"/tmp"`
-}
-
-type GithubAuthConfig struct {
-	KeyPath        string `required:"true"`
-	AppId          int    `required:"true"`
-	InstallationId int    `required:"true"`
 }
 
 type Service struct {

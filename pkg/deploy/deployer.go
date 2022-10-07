@@ -2,9 +2,9 @@ package deploy
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"github.com/google/go-github/v45/github"
+	"github.com/apono-io/argo-bot/pkg/api"
+	"github.com/apono-io/argo-bot/pkg/github"
 	log "github.com/sirupsen/logrus"
 	"io/ioutil"
 	"os"
@@ -12,18 +12,6 @@ import (
 	"strings"
 	"text/template"
 )
-
-type ValidationErr struct {
-	Err error
-}
-
-func (e ValidationErr) Error() string {
-	return e.Err.Error()
-}
-
-func NewValidationErr(err string) error {
-	return ValidationErr{Err: errors.New(err)}
-}
 
 type Deployer interface {
 	GetCommitSha(ctx context.Context, serviceName, commit string) (string, string, error)
@@ -33,40 +21,40 @@ type Deployer interface {
 }
 
 func New(config Config) (Deployer, error) {
-	client, err := NewGithubClient(context.Background(), config.Github)
+	client, err := github.NewClient(context.Background(), config.Github)
 	if err != nil {
 		return nil, err
 	}
 
-	return &gitDeployer{
-		config:    config,
-		gitClient: client,
+	return &githubDeployer{
+		config:       config,
+		githubClient: client,
 	}, nil
 }
 
-type gitDeployer struct {
-	config    Config
-	gitClient GitClient
+type githubDeployer struct {
+	config       Config
+	githubClient github.Client
 }
 
-func (d *gitDeployer) GetCommitSha(ctx context.Context, serviceName, commit string) (string, string, error) {
+func (d *githubDeployer) GetCommitSha(ctx context.Context, serviceName, commit string) (string, string, error) {
 	service, err := d.LookupService(serviceName)
 	if err != nil {
 		return "", "", err
 	}
 
-	return d.gitClient.GetCommitSha(ctx, service.GithubOrganization, service.GithubRepository, commit)
+	return d.githubClient.GetCommitSha(ctx, service.GithubOrganization, service.GithubRepository, commit)
 }
 
-func (d *gitDeployer) Approve(ctx context.Context, pullRequestId int) error {
-	return d.gitClient.MergePR(ctx, pullRequestId)
+func (d *githubDeployer) Approve(ctx context.Context, pullRequestId int) error {
+	return d.githubClient.MergePR(ctx, pullRequestId)
 }
 
-func (d *gitDeployer) Cancel(ctx context.Context, pullRequestId int) error {
-	return d.gitClient.ClosePR(ctx, pullRequestId)
+func (d *githubDeployer) Cancel(ctx context.Context, pullRequestId int) error {
+	return d.githubClient.ClosePR(ctx, pullRequestId)
 }
 
-func (d *gitDeployer) Deploy(serviceName, environmentName, commit, commitUrl, user string) (*github.PullRequest, string, error) {
+func (d *githubDeployer) Deploy(serviceName, environmentName, commit, commitUrl, user string) (*github.PullRequest, string, error) {
 	ctx := context.Background()
 	logWithCtx := log.WithFields(log.Fields{
 		"environment": environmentName,
@@ -93,7 +81,7 @@ func (d *gitDeployer) Deploy(serviceName, environmentName, commit, commitUrl, us
 		}
 
 		if !validBranch {
-			return nil, "", NewValidationErr("commit is not in allowed branches")
+			return nil, "", api.NewValidationErr("commit is not in allowed branches")
 		}
 	}
 
@@ -106,7 +94,7 @@ func (d *gitDeployer) Deploy(serviceName, environmentName, commit, commitUrl, us
 		return nil, "", fmt.Errorf("failed to create temp directory, error: %w", err)
 	}
 
-	ref, err := d.gitClient.Clone(ctx, environment.DeploymentRepoBranch, branch, baseFolder)
+	ref, err := d.githubClient.Clone(ctx, environment.DeploymentRepoBranch, branch, baseFolder)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to clone deployment repository, error: %w", err)
 	}
@@ -122,18 +110,18 @@ func (d *gitDeployer) Deploy(serviceName, environmentName, commit, commitUrl, us
 		return nil, "", fmt.Errorf("failed to render templates, error: %w", err)
 	}
 
-	tree, err := d.gitClient.CreateTree(ctx, ref, baseFolder, files)
+	tree, err := d.githubClient.CreateTree(ctx, ref, baseFolder, files)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create diff tree, error: %w", err)
 	}
 
-	if err = d.gitClient.PushCommit(ctx, ref, tree, commitMsg); err != nil {
+	if err = d.githubClient.PushCommit(ctx, ref, tree, commitMsg); err != nil {
 		return nil, "", fmt.Errorf("failed to create commit, error: %w", err)
 	}
 
 	prDescription := fmt.Sprintf("Service Name: %s\nEnvironment: %s\nCommit: [%s](%s)\nRequested by: %s",
 		serviceName, environmentName, commit[:7], commitUrl, user)
-	pr, diff, err := d.gitClient.CreatePR(ctx, commitMsg, prDescription, environment.DeploymentRepoBranch, branch)
+	pr, diff, err := d.githubClient.CreatePR(ctx, commitMsg, prDescription, environment.DeploymentRepoBranch, branch)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create pull request, error: %w", err)
 	}
@@ -143,11 +131,11 @@ func (d *gitDeployer) Deploy(serviceName, environmentName, commit, commitUrl, us
 	return pr, diff, nil
 }
 
-func (d *gitDeployer) validateBranch(ctx context.Context, organization, repository, commit string, branches []string) (bool, error) {
-	return d.gitClient.CommitInBranch(ctx, organization, repository, commit, branches)
+func (d *githubDeployer) validateBranch(ctx context.Context, organization, repository, commit string, branches []string) (bool, error) {
+	return d.githubClient.CommitInBranch(ctx, organization, repository, commit, branches)
 }
 
-func (d *gitDeployer) renderTemplates(baseFolder, templatePath, generatedPath, serviceName, environment, commit string) ([]string, error) {
+func (d *githubDeployer) renderTemplates(baseFolder, templatePath, generatedPath, serviceName, environment, commit string) ([]string, error) {
 	generatedFolder := filepath.Join(baseFolder, generatedPath)
 	err := d.cleanFolder(generatedFolder)
 	if err != nil {
@@ -193,7 +181,7 @@ func (d *gitDeployer) renderTemplates(baseFolder, templatePath, generatedPath, s
 	return renderedFiles, nil
 }
 
-func (d *gitDeployer) cleanFolder(folder string) error {
+func (d *githubDeployer) cleanFolder(folder string) error {
 	err := os.RemoveAll(folder)
 	if err != nil {
 		return err
@@ -202,25 +190,25 @@ func (d *gitDeployer) cleanFolder(folder string) error {
 	return os.MkdirAll(folder, 0755)
 }
 
-func (d *gitDeployer) LookupService(name string) (*Service, error) {
+func (d *githubDeployer) LookupService(name string) (*Service, error) {
 	for _, service := range d.config.Services {
 		if strings.ToLower(service.Name) == strings.ToLower(name) {
 			return &service, nil
 		}
 	}
-	return nil, NewValidationErr("service does not exist")
+	return nil, api.NewValidationErr("service does not exist")
 }
 
-func (d *gitDeployer) LookupEnvironment(service *Service, name string) (*ServiceEnvironment, error) {
+func (d *githubDeployer) LookupEnvironment(service *Service, name string) (*ServiceEnvironment, error) {
 	for _, environment := range service.Environments {
 		if strings.ToLower(environment.Name) == strings.ToLower(name) {
 			return &environment, nil
 		}
 	}
-	return nil, NewValidationErr("environment does not exist")
+	return nil, api.NewValidationErr("environment does not exist")
 }
 
-func (d *gitDeployer) renderTemplateFile(absolutePath string, tmpl *template.Template, templateName string, opts options) error {
+func (d *githubDeployer) renderTemplateFile(absolutePath string, tmpl *template.Template, templateName string, opts options) error {
 	file, err := os.OpenFile(absolutePath, os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
