@@ -110,6 +110,12 @@ func (d *gitDeployer) Deploy(serviceName, environmentName, commit, commitUrl, us
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to clone deployment repository, error: %w", err)
 	}
+	defer func() {
+		err := os.RemoveAll(baseFolder)
+		if err != nil {
+			logWithCtx.WithError(err).Error("failed to remove source folder")
+		}
+	}()
 
 	files, err := d.renderTemplates(baseFolder, environment.TemplatePath, environment.GeneratedPath, serviceName, environmentName, commit)
 	if err != nil {
