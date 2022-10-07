@@ -1,15 +1,19 @@
 package deploy
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"errors"
+	"fmt"
 	"github.com/bradleyfalzon/ghinstallation/v2"
-	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/plumbing"
-	plumbinghttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/google/go-github/v45/github"
+	log "github.com/sirupsen/logrus"
+	"io"
 	"io/ioutil"
 	"net/http"
+	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -75,16 +79,30 @@ func (c *githubClient) Clone(ctx context.Context, baseBranch, branch, folder str
 		return nil, err
 	}
 
-	token, err := c.client.Client().Transport.(*ghinstallation.Transport).Token(ctx)
-	_, err = git.PlainClone(folder, false, &git.CloneOptions{
-		URL: c.cloneUrl,
-		Auth: &plumbinghttp.BasicAuth{
-			Username: "x-access-token",
-			Password: token,
-		},
-		ReferenceName: plumbing.NewBranchReferenceName(branch),
-	})
+	archiveLink, _, err := c.client.Repositories.GetArchiveLink(ctx, c.organization, c.repository, github.Tarball, &github.RepositoryContentGetOptions{Ref: ref.GetRef()}, true)
+	if err != nil {
+		return nil, err
+	}
 
+	req, err := http.NewRequest(http.MethodGet, archiveLink.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build fetch request, error: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch source from github, error: %w", err)
+	}
+
+	body := resp.Body
+	defer func() {
+		err := body.Close()
+		if err != nil {
+			log.WithError(err).Error("error closing response body")
+		}
+	}()
+
+	err = c.extractTarGz(folder, body)
 	if err != nil {
 		return nil, err
 	}
@@ -273,4 +291,76 @@ func (c *githubClient) deleteBranch(ctx context.Context, branchName string) erro
 	}
 
 	return err
+}
+
+func (c *githubClient) extractTarGz(targetPath string, gzipStream io.Reader) error {
+	uncompressedStream, err := gzip.NewReader(gzipStream)
+	if err != nil {
+		return fmt.Errorf("failed to create gzip reader, error: %w", err)
+	}
+
+	tarReader := tar.NewReader(uncompressedStream)
+	for true {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+
+		if err != nil {
+			return fmt.Errorf("failed to get next value from tar reader, error: %w", err)
+		}
+
+		name := c.removeFirstPathPart(header.Name)
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.Mkdir(path.Join(targetPath, name), 0755); err != nil && !errors.Is(err, os.ErrExist) {
+				return fmt.Errorf("failed to create directory %s, error: %w", name, err)
+			}
+		case tar.TypeReg:
+			err := c.createFile(targetPath, header, tarReader)
+			if err != nil {
+				return err
+			}
+		case tar.TypeXGlobalHeader:
+			continue
+		default:
+			return fmt.Errorf("unkown header type: %b, name: %s", header.Typeflag, name)
+		}
+	}
+
+	return nil
+}
+
+func (c *githubClient) createFile(targetPath string, header *tar.Header, tarReader *tar.Reader) error {
+	fullPath := path.Join(targetPath, c.removeFirstPathPart(header.Name))
+	err := os.MkdirAll(path.Dir(fullPath), 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create parent directories %s, error: %w", targetPath, err)
+	}
+
+	outFile, err := os.Create(fullPath)
+	defer func() {
+		closeErr := outFile.Close()
+		if closeErr != nil {
+			log.WithError(closeErr).WithField("file_name", header.Name).Error("failed to close file")
+		}
+	}()
+
+	if err != nil {
+		return fmt.Errorf("failed to create file %s, error: %w", header.Name, err)
+	}
+
+	if _, err := io.Copy(outFile, tarReader); err != nil {
+		return fmt.Errorf("failed to copy file content, file: %s, error: %w", header.Name, err)
+	}
+
+	return nil
+}
+
+func (c *githubClient) removeFirstPathPart(name string) string {
+	firstPathSeparatorIdx := strings.Index(name, "/")
+	if firstPathSeparatorIdx == -1 {
+		return name
+	}
+	return name[firstPathSeparatorIdx:]
 }

@@ -133,7 +133,7 @@ func (c cmd) tokenize() {
 	for i, param := range params {
 		c.tokens[i] = &commander.Token{
 			Word: param.Name(),
-			Type: 1,
+			Type: "WORD_PARAMETER",
 		}
 	}
 }
