@@ -70,4 +70,5 @@ changelog:
       - '^docs:'
       - '^test:'
 release:
+  prerelease: auto
   skip_upload: true
