@@ -64,11 +64,13 @@ func (b *bot) Run() error {
 }
 
 func (b *bot) constructCommand(usage string, definition *slacker.CommandDefinition) slacker.BotCommand {
-	return &cmd{
+	c := &cmd{
 		usage:      usage,
 		definition: definition,
 		command:    allot.New(fmt.Sprintf("%s %s", b.botName, usage)),
 	}
+	c.tokenize()
+	return c
 }
 
 func (b *bot) constructBotContext(ctx context.Context, client *slackgo.Client, socketmode *socketmode.Client, evt *slacker.MessageEvent) slacker.BotContext {
@@ -127,13 +129,24 @@ func (c *cmd) Interactive(slacker *slacker.Slacker, evt *socketmode.Event, callb
 	c.definition.Interactive(slacker, evt, callback, req)
 }
 
-func (c cmd) tokenize() {
+func (c *cmd) tokenize() {
 	params := c.command.Parameters()
-	c.tokens = make([]*commander.Token, len(params))
-	for i, param := range params {
-		c.tokens[i] = &commander.Token{
-			Word: param.Name(),
-			Type: "WORD_PARAMETER",
+	paramIdx := 0
+
+	strTokens := strings.Split(strings.TrimSpace(c.command.Text()), " ")
+	c.tokens = make([]*commander.Token, len(strTokens))
+	for i, token := range strTokens {
+		if strings.Index(token, "<") == 0 {
+			c.tokens[i] = &commander.Token{
+				Word: params[paramIdx].Name(),
+				Type: "WORD_PARAMETER",
+			}
+			paramIdx++
+		} else {
+			c.tokens[i] = &commander.Token{
+				Word: token,
+				Type: "NOT_PARAMETER",
+			}
 		}
 	}
 }
