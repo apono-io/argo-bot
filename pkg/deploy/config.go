@@ -18,6 +18,6 @@ type ServiceEnvironment struct {
 	Name                 string `required:"true"`
 	TemplatePath         string `required:"true"`
 	GeneratedPath        string `required:"true"`
-	AllowedBranchesCsv   string `default:""`
+	AllowedBranches      []string
 	DeploymentRepoBranch string `default:""`
 }

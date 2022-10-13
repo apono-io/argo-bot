@@ -72,10 +72,9 @@ func (d *githubDeployer) Deploy(serviceName, environmentName, commit, commitUrl,
 		return nil, "", err
 	}
 
-	if strings.TrimSpace(environment.AllowedBranchesCsv) != "" {
+	if len(environment.AllowedBranches) > 0 {
 		logWithCtx.Infof("Validating branch")
-		allowedBranches := strings.Split(strings.TrimSpace(environment.AllowedBranchesCsv), ",")
-		validBranch, err := d.validateBranch(ctx, service.GithubOrganization, service.GithubRepository, commit, allowedBranches)
+		validBranch, err := d.validateBranch(ctx, service.GithubOrganization, service.GithubRepository, commit, environment.AllowedBranches)
 		if err != nil {
 			return nil, "", err
 		}
