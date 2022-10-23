@@ -62,11 +62,14 @@ deploy:
         - name: <environment-name>
           templatePath: "<templates-folder-path>"
           generatedPath: "<generated-files-folder-path>"
-          allowedBranchesCsv: "master" # Restriction for deployment branches (Example: only master deployment allowed on prod)
+          allowedBranches: # Restriction for deployment branches (Example: only master deployment allowed on prod)
+            - "master"
         - name: <environment-name>
           templatePath: "<templates-folder-path>"
           generatedPath: "<generated-files-folder-path>"
 ``` 
+
+You can see a full example for the deployments repository [here](https://github.com/apono-io/argo-bot/tree/master/examples/deployments-repo)
 
 ### Running
 ```shell

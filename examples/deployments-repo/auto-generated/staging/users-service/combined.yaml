@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: users-service
+  labels:
+    app: users-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: users-service
+  template:
+    metadata:
+      labels:
+        app: users-service
+    spec:
+      containers:
+        - name: users-service
+          image: "cr.example.com/users-service:66bc98f0139e0909ce2df330faa27a5f943f5c9d"
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: "ENVIRONMENT"
+              value: "staging"
+            - name: "INGRESS_PATH"
+              value: "users-service.staging.internal.example.com"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: users-service
+  labels:
+    app: users-service
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      protocol: TCP
+      targetPort: 8080
+  selector:
+    app: users-service

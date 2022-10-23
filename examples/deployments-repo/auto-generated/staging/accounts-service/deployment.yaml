@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: accounts-service
+  namespace: "staging"
+  labels:
+    app: accounts-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: accounts-service
+  template:
+    metadata:
+      labels:
+        app: accounts-service
+    spec:
+      containers:
+        - name: accounts-service
+          image: "cr.example.com/accounts-service:79419f0dd91e351f4ba84fe552e54e4f4d4308cc"
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: "ENVIRONMENT"
+              value: "staging"
+            - name: "INGRESS_PATH"
+              value: "accounts-service.staging.internal.example.com"

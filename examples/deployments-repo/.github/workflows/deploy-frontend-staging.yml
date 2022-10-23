@@ -1,0 +1,19 @@
+name: Deploy Frontend Staging
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'auto-generated/staging/frontend/version'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+      - name: Deploy
+        run: |
+          VERSION=$(cat ./auto-generated/staging/frontend/version)
+          echo "Deploying frontend to staging version $VERSION"

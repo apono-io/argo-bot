@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: accounts-service
+  namespace: "prod"
+  labels:
+    app: accounts-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: accounts-service
+  template:
+    metadata:
+      labels:
+        app: accounts-service
+    spec:
+      containers:
+        - name: accounts-service
+          image: "cr.example.com/accounts-service:5637e006a2df3f683bc4ea09004d0fbc475071f4"
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: "ENVIRONMENT"
+              value: "prod"
+            - name: "INGRESS_PATH"
+              value: "accounts-service.staging.internal.example.com"

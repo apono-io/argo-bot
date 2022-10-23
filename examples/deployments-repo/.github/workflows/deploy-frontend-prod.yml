@@ -1,0 +1,19 @@
+name: Deploy Frontend Prod
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'auto-generated/prod/frontend/version'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+      - name: Deploy
+        run: |
+          VERSION=$(cat ./auto-generated/prod/frontend/version)
+          echo "Deploying frontend to prod version $VERSION"
