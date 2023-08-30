@@ -24,7 +24,7 @@ type Client interface {
 	Clone(ctx context.Context, baseBranch, branch, folder string) (*github.Reference, error)
 	GetRef(ctx context.Context, baseBranch, branch string) (*github.Reference, error)
 	CreateTree(ctx context.Context, ref *github.Reference, baseFolder string, files []string) (tree *github.Tree, err error)
-	PushCommit(ctx context.Context, ref *github.Reference, tree *github.Tree, commitMessage string) (err error)
+	PushCommit(ctx context.Context, ref *github.Reference, tree *github.Tree, userFullname string, userEmail string, commitMessage string) (err error)
 	CreatePR(ctx context.Context, title, description, baseBranch, branch string) (*PullRequest, string, error)
 	MergePR(ctx context.Context, id int) error
 	ClosePR(ctx context.Context, id int) error
@@ -162,7 +162,7 @@ func (c *apiClient) CreateTree(ctx context.Context, ref *github.Reference, baseF
 	return tree, err
 }
 
-func (c *apiClient) PushCommit(ctx context.Context, ref *github.Reference, tree *github.Tree, commitMessage string) (err error) {
+func (c *apiClient) PushCommit(ctx context.Context, ref *github.Reference, tree *github.Tree, userFullname string, userEmail string, commitMessage string) (err error) {
 	// Get the parent commit to attach the commit to.
 	parent, _, err := c.client.Repositories.GetCommit(ctx, c.organization, c.repository, *ref.Object.SHA, nil)
 	if err != nil {
@@ -172,9 +172,14 @@ func (c *apiClient) PushCommit(ctx context.Context, ref *github.Reference, tree 
 	parent.Commit.SHA = parent.SHA
 
 	// Create the commit using the tree.
-	date := time.Now()
-	author := &github.CommitAuthor{Date: &date, Name: &c.authorName, Email: &c.authorEmail}
-	commit := &github.Commit{Author: author, Message: &commitMessage, Tree: tree, Parents: []*github.Commit{parent.Commit}}
+	now := time.Now()
+	commit := &github.Commit{
+		Author:    &github.CommitAuthor{Date: &now, Name: &userFullname, Email: &userEmail},
+		Committer: &github.CommitAuthor{Date: &now, Name: &c.authorName, Email: &c.authorEmail},
+		Message:   &commitMessage,
+		Tree:      tree,
+		Parents:   []*github.Commit{parent.Commit},
+	}
 	newCommit, _, err := c.client.Git.CreateCommit(ctx, c.organization, c.repository, commit)
 	if err != nil {
 		return err

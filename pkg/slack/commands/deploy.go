@@ -32,8 +32,8 @@ var (
 )
 
 func (c *controller) handleDeploy(botCtx slacker.BotContext, req slacker.Request, _ slacker.ResponseWriter) {
-	ctxLogger := log.WithField("slackUserId", botCtx.Event().User).
-		WithField("slackChannelId", botCtx.Event().Channel)
+	ctxLogger := log.WithField("slackUserId", botCtx.Event().UserID).
+		WithField("slackChannelId", botCtx.Event().ChannelID)
 
 	var (
 		serviceName = req.StringParam("service", "")
@@ -48,7 +48,7 @@ func (c *controller) handleDeploy(botCtx slacker.BotContext, req slacker.Request
 	deploymentReq := deploymentRequest{
 		ServiceName: serviceName,
 		Environment: environment,
-		UserId:      botCtx.Event().User,
+		UserId:      botCtx.Event().UserID,
 		Commit:      userCommit,
 	}
 
@@ -71,14 +71,13 @@ func (c *controller) handleDeploy(botCtx slacker.BotContext, req slacker.Request
 
 	deploymentReq.Channel = &channel
 	deploymentReq.Timestamp = &timestamp
-	user := "@" + botCtx.Event().UserName
-	profile, err := botCtx.SocketMode().GetUserProfile(&slackgo.GetUserProfileParameters{UserID: botCtx.Event().User})
+	profile, err := botCtx.SocketModeClient().GetUserProfile(&slackgo.GetUserProfileParameters{UserID: botCtx.Event().UserID})
 	if err != nil {
 		ctxLogger.WithError(err).Error("Failed to get slack user profile")
 	}
 
-	user = fmt.Sprintf("%s %s (%s)", profile.FirstName, profile.LastName, profile.Email)
-	pr, diff, err := c.deployer.Deploy(serviceName, environment, commit, commitUrl, user)
+	userFullname := fmt.Sprintf("%s %s", profile.FirstName, profile.LastName)
+	pr, diff, err := c.deployer.Deploy(serviceName, environment, commit, commitUrl, userFullname, profile.Email)
 	if err != nil {
 		ctxLogger.WithError(err).Error("Failed to deploy")
 		c.sendErrorMessage(botCtx, ctxLogger, deploymentReq, err)
@@ -90,8 +89,8 @@ func (c *controller) handleDeploy(botCtx slacker.BotContext, req slacker.Request
 
 func (c *controller) sendRequestDetails(botCtx slacker.BotContext, ctxLogger *log.Entry, req deploymentRequest) (string, string, error) {
 	ctxLogger.Infof("Got request to deploy %s to %s with version %s from %s", req.ServiceName, req.Environment, req.Commit, req.UserId)
-	channel, timestamp, _, err := botCtx.SocketMode().SendMessage(
-		botCtx.Event().Channel,
+	channel, timestamp, _, err := botCtx.SocketModeClient().SendMessage(
+		botCtx.Event().ChannelID,
 		c.messageWithRequestDetails(lightBlueColor, noStatus, req)...,
 	)
 
@@ -136,8 +135,8 @@ func (c *controller) sendApprovalMessage(botCtx slacker.BotContext, req deployme
 	req.PrNumber = pr.Id
 	bytes, err := json.Marshal(req)
 	if err != nil {
-		ctxLogger.WithField("slackUserId", botCtx.Event().User).
-			WithField("slackChannelId", botCtx.Event().Channel).
+		ctxLogger.WithField("slackUserId", botCtx.Event().UserID).
+			WithField("slackChannelId", botCtx.Event().ChannelID).
 			WithError(err).
 			Error("Failed to marshal request")
 		return
@@ -155,7 +154,7 @@ func (c *controller) sendApprovalMessage(botCtx slacker.BotContext, req deployme
 		diffText = "_Nothing to change, merging this PR will only create empty commit_"
 	}
 
-	_, _, _, err = botCtx.SocketMode().UpdateMessage(*req.Channel, *req.Timestamp,
+	_, _, _, err = botCtx.SocketModeClient().UpdateMessage(*req.Channel, *req.Timestamp,
 		c.messageWithRequestDetails(lightBlueColor, noStatus, req,
 			slackgo.NewSectionBlock(slackgo.NewTextBlockObject(slackgo.MarkdownType, diffText, false, false), nil, nil),
 			slackgo.NewContextBlock("", slackgo.NewTextBlockObject(slackgo.MarkdownType, fmt.Sprintf("<%s|Original pull request>", pr.Link), false, false)),
@@ -167,15 +166,15 @@ func (c *controller) sendApprovalMessage(botCtx slacker.BotContext, req deployme
 	)
 
 	if err != nil {
-		ctxLogger.WithField("slackUserId", botCtx.Event().User).
-			WithField("slackChannelId", botCtx.Event().Channel).
+		ctxLogger.WithField("slackUserId", botCtx.Event().UserID).
+			WithField("slackChannelId", botCtx.Event().ChannelID).
 			WithError(err).
 			Error("Failed to send message to user")
 	}
 }
 
-func (c *controller) handleApproval(s *slacker.Slacker, _ *socketmode.Event, callback *slackgo.InteractionCallback, _ *socketmode.Request) {
-	ctx := context.Background()
+func (c *controller) handleApproval(botCtx slacker.InteractiveBotContext, _ *socketmode.Request, callback *slackgo.InteractionCallback) {
+	ctx := botCtx.Context()
 	logger := log.WithField("slackUserId", callback.User.ID).
 		WithField("slackChannelId", callback.Channel.ID)
 	blockActions := callback.ActionCallback.BlockActions
@@ -197,13 +196,14 @@ func (c *controller) handleApproval(s *slacker.Slacker, _ *socketmode.Event, cal
 	pullRequestNumber := req.PrNumber
 	logger = logger.WithField("pullRequestId", pullRequestNumber)
 
+	socketModeClient := botCtx.SocketModeClient()
 	switch actionId {
 	case deploymentApproveActionId:
-		c.executeApprovalAction(ctx, s, callback, logger, req, c.deployer.Approve,
+		c.executeApprovalAction(ctx, socketModeClient, callback, logger, req, c.deployer.Approve,
 			lightGreenColor, "Merging deployment pull request...",
 			darkGreenColor, "Deployment pull request merged successfully")
 	case deploymentDenyActionId:
-		c.executeApprovalAction(ctx, s, callback, logger, req, c.deployer.Cancel,
+		c.executeApprovalAction(ctx, socketModeClient, callback, logger, req, c.deployer.Cancel,
 			lightGrayColor, "Closing deployment pull request...",
 			darkGrayColor, "Closed deployment pull request")
 	default:
@@ -211,9 +211,9 @@ func (c *controller) handleApproval(s *slacker.Slacker, _ *socketmode.Event, cal
 	}
 }
 
-func (c *controller) executeApprovalAction(ctx context.Context, s *slacker.Slacker, callback *slackgo.InteractionCallback, logger *log.Entry,
+func (c *controller) executeApprovalAction(ctx context.Context, client *socketmode.Client, callback *slackgo.InteractionCallback, logger *log.Entry,
 	req deploymentRequest, handler approvalActionHandler, progressColor, progressMsg, successColor, successMsg string) {
-	err := c.updateMessage(s.SocketMode(), callback, req, progressColor, progressMsg)
+	err := c.updateMessage(client, callback, req, progressColor, progressMsg)
 	if err != nil {
 		logger.WithError(err).Error("Failed to send progress message to Slack")
 	}
@@ -221,7 +221,7 @@ func (c *controller) executeApprovalAction(ctx context.Context, s *slacker.Slack
 	err = handler(ctx, req.PrNumber)
 	if err != nil {
 		logger.WithError(err).Error("Failed execute approval action")
-		err = c.updateMessage(s.SocketMode(), callback, req, darkRedColor, fmt.Sprintf("Error: %s", err.Error()))
+		err = c.updateMessage(client, callback, req, darkRedColor, fmt.Sprintf("Error: %s", err.Error()))
 		if err != nil {
 			logger.WithError(err).Error("Failed to notify user about error during approval process")
 		}
@@ -229,7 +229,7 @@ func (c *controller) executeApprovalAction(ctx context.Context, s *slacker.Slack
 		return
 	}
 
-	err = c.updateMessage(s.SocketMode(), callback, req, successColor, successMsg)
+	err = c.updateMessage(client, callback, req, successColor, successMsg)
 	if err != nil {
 		logger.WithError(err).Error("Failed to send success message to Slack")
 	}
@@ -255,14 +255,14 @@ func (c *controller) sendErrorMessage(botCtx slacker.BotContext, ctxLogger *log.
 	var err error
 	msgOptions := c.messageWithRequestDetails(darkRedColor, errorMsg, req)
 	if req.Channel != nil && req.Timestamp != nil {
-		_, _, _, err = botCtx.SocketMode().UpdateMessage(*req.Channel, *req.Timestamp, msgOptions...)
+		_, _, _, err = botCtx.SocketModeClient().UpdateMessage(*req.Channel, *req.Timestamp, msgOptions...)
 	} else {
-		_, _, _, err = botCtx.SocketMode().SendMessage(botCtx.Event().Channel, msgOptions...)
+		_, _, _, err = botCtx.SocketModeClient().SendMessage(botCtx.Event().ChannelID, msgOptions...)
 	}
 
 	if err != nil {
-		ctxLogger.WithField("slackUserId", botCtx.Event().User).
-			WithField("slackChannelId", botCtx.Event().Channel).
+		ctxLogger.WithField("slackUserId", botCtx.Event().UserID).
+			WithField("slackChannelId", botCtx.Event().ChannelID).
 			WithField("errorMsg", errorMsg).
 			WithError(err).
 			Error("Failed to send error message to user")

@@ -6,7 +6,6 @@ import (
 	"github.com/apono-io/argo-bot/pkg/api"
 	"github.com/apono-io/argo-bot/pkg/github"
 	log "github.com/sirupsen/logrus"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +14,7 @@ import (
 
 type Deployer interface {
 	GetCommitSha(ctx context.Context, serviceName, commit string) (string, string, error)
-	Deploy(serviceName, environment, commit, commitUrl, user string) (*github.PullRequest, string, error)
+	Deploy(serviceName, environment, commit, commitUrl, userFullname, userEmail string) (*github.PullRequest, string, error)
 	Approve(ctx context.Context, pullRequestId int) error
 	Cancel(ctx context.Context, pullRequestId int) error
 }
@@ -54,7 +53,7 @@ func (d *githubDeployer) Cancel(ctx context.Context, pullRequestId int) error {
 	return d.githubClient.ClosePR(ctx, pullRequestId)
 }
 
-func (d *githubDeployer) Deploy(serviceName, environmentName, commit, commitUrl, user string) (*github.PullRequest, string, error) {
+func (d *githubDeployer) Deploy(serviceName, environmentName, commit, commitUrl, userFullname, userEmail string) (*github.PullRequest, string, error) {
 	ctx := context.Background()
 	logWithCtx := log.WithFields(log.Fields{
 		"environment": environmentName,
@@ -85,10 +84,10 @@ func (d *githubDeployer) Deploy(serviceName, environmentName, commit, commitUrl,
 	}
 
 	logWithCtx.Infof("Starting deployment")
-	branch := fmt.Sprintf("argo-deploy-%s-%s", serviceName, environmentName)
-	commitMsg := fmt.Sprintf("Argo Bot: Deploy %s to %s commit %s triggered by %s", serviceName, environmentName, commit[:7], user)
+	branch := fmt.Sprintf("deploy-%s-%s", serviceName, environmentName)
+	commitMsg := fmt.Sprintf("Deploy %s to %s with version %s triggered by %s (%s)", serviceName, environmentName, commit[:7], userFullname, userEmail)
 
-	baseFolder, err := ioutil.TempDir(d.config.Github.CloneTmpDir, branch+"-*")
+	baseFolder, err := os.MkdirTemp(d.config.Github.CloneTmpDir, branch+"-*")
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create temp directory, error: %w", err)
 	}
@@ -114,12 +113,12 @@ func (d *githubDeployer) Deploy(serviceName, environmentName, commit, commitUrl,
 		return nil, "", fmt.Errorf("failed to create diff tree, error: %w", err)
 	}
 
-	if err = d.githubClient.PushCommit(ctx, ref, tree, commitMsg); err != nil {
+	if err = d.githubClient.PushCommit(ctx, ref, tree, userFullname, userEmail, commitMsg); err != nil {
 		return nil, "", fmt.Errorf("failed to create commit, error: %w", err)
 	}
 
-	prDescription := fmt.Sprintf("Service Name: %s\nEnvironment: %s\nCommit: [%s](%s)\nRequested by: %s",
-		serviceName, environmentName, commit[:7], commitUrl, user)
+	prDescription := fmt.Sprintf("Service Name: %s\nEnvironment: %s\nCommit: [%s](%s)\nRequested by: %s (%s)",
+		serviceName, environmentName, commit[:7], commitUrl, userFullname, userEmail)
 	pr, diff, err := d.githubClient.CreatePR(ctx, commitMsg, prDescription, environment.DeploymentRepoBranch, branch)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create pull request, error: %w", err)
@@ -142,7 +141,7 @@ func (d *githubDeployer) renderTemplates(baseFolder, templatePath, generatedPath
 	}
 
 	templateFolder := filepath.Join(baseFolder, templatePath)
-	templateFiles, err := ioutil.ReadDir(templateFolder)
+	templateFiles, err := os.ReadDir(templateFolder)
 	if err != nil {
 		return nil, err
 	}

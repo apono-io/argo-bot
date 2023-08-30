@@ -39,7 +39,7 @@ type bot struct {
 }
 
 func (b *bot) Run() error {
-	authInfo, err := b.slackerBot.Client().AuthTest()
+	authInfo, err := b.slackerBot.APIClient().AuthTest()
 	if err != nil {
 		return err
 	}
@@ -63,7 +63,7 @@ func (b *bot) Run() error {
 	return b.slackerBot.Listen(ctx)
 }
 
-func (b *bot) constructCommand(usage string, definition *slacker.CommandDefinition) slacker.BotCommand {
+func (b *bot) constructCommand(usage string, definition *slacker.CommandDefinition) slacker.Command {
 	c := &cmd{
 		usage:      usage,
 		definition: definition,
@@ -74,7 +74,7 @@ func (b *bot) constructCommand(usage string, definition *slacker.CommandDefiniti
 }
 
 func (b *bot) constructBotContext(ctx context.Context, client *slackgo.Client, socketmode *socketmode.Client, evt *slacker.MessageEvent) slacker.BotContext {
-	if evt.Channel[0] == 'D' && strings.Index(evt.Text, b.botName) != 0 {
+	if evt.ChannelID[0] == 'D' && strings.Index(evt.Text, b.botName) != 0 {
 		evt.Text = fmt.Sprintf("%s %s", b.botName, strings.TrimSpace(evt.Text))
 	} else if strings.Index(evt.Text, b.botMentionPattern) != 0 {
 		evt.Text = strings.Replace(evt.Text, b.botMentionPattern, b.botName, 1)
@@ -118,15 +118,15 @@ func (c *cmd) Tokenize() []*commander.Token {
 }
 
 func (c *cmd) Execute(botCtx slacker.BotContext, request slacker.Request, response slacker.ResponseWriter) {
-	log.Printf("Executing command [%s] invoked by %s", c.usage, botCtx.Event().User)
+	log.Printf("Executing command [%s] invoked by %s", c.usage, botCtx.Event().UserID)
 	c.definition.Handler(botCtx, request, response)
 }
 
-func (c *cmd) Interactive(slacker *slacker.Slacker, evt *socketmode.Event, callback *slackgo.InteractionCallback, req *socketmode.Request) {
+func (c *cmd) Interactive(ctx slacker.InteractiveBotContext, req *socketmode.Request, callback *slackgo.InteractionCallback) {
 	if c.definition == nil || c.definition.Interactive == nil {
 		return
 	}
-	c.definition.Interactive(slacker, evt, callback, req)
+	c.definition.Interactive(ctx, req, callback)
 }
 
 func (c *cmd) tokenize() {
