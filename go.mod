@@ -4,7 +4,7 @@ go 1.21
 
 require (
 	github.com/bradleyfalzon/ghinstallation/v2 v2.6.0
-	github.com/cristalhq/aconfig v0.18.4
+	github.com/cristalhq/aconfig v0.18.5
 	github.com/cristalhq/aconfig/aconfigdotenv v0.17.1
 	github.com/cristalhq/aconfig/aconfigyaml v0.17.1
 	github.com/form3tech-oss/logrus-logzio-hook v1.0.0
