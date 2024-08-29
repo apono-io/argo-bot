@@ -37,7 +37,7 @@ func (c *controller) handleDeploy(botCtx slacker.BotContext, req slacker.Request
 		WithField("slackChannelId", botCtx.Event().ChannelID)
 
 	var (
-		serviceName = req.StringParam("service", "")
+		serviceName = req.StringParam("services", "")
 		environment = req.StringParam("environment", "")
 		userCommit  = req.StringParam("commit", "")
 	)
