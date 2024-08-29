@@ -104,7 +104,7 @@ func (d *githubDeployer) Deploy(serviceNames []string, environmentName, commit, 
 
 	logWithCtx.Infof("Starting deployment")
 	branch := fmt.Sprintf("deploy-%s-%s", servicesString, environmentName)
-	commitMsg := fmt.Sprintf("Deploy %s to %s with version %s triggered by %s (%s)", servicesString, environmentName, commit[:7], userFullname, userEmail)
+	prTitle := fmt.Sprintf("Deploy %s to %s with version %s triggered by %s (%s)", servicesString, environmentName, commit[:7], userFullname, userEmail)
 
 	baseFolder, err := os.MkdirTemp(d.config.Github.CloneTmpDir, branch+"-*")
 	if err != nil {
@@ -123,6 +123,7 @@ func (d *githubDeployer) Deploy(serviceNames []string, environmentName, commit, 
 	}()
 
 	for service, environment := range serviceToEnvironment {
+		commitMsg := fmt.Sprintf("Deploy %s to %s with version %s triggered by %s (%s)", service.Name, environmentName, commit[:7], userFullname, userEmail)
 		files, err := d.renderTemplates(baseFolder, environment.TemplatePath, environment.GeneratedPath, service.Name, environmentName, commit)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to render templates for serivce %s, error: %w", service.Name, err)
@@ -140,7 +141,7 @@ func (d *githubDeployer) Deploy(serviceNames []string, environmentName, commit, 
 
 	prDescription := fmt.Sprintf("Service Names: %s\nEnvironment: %s\nCommit: [%s](%s)\nRequested by: %s (%s)",
 		servicesString, environmentName, commit[:7], commitUrl, userFullname, userEmail)
-	pr, diff, err := d.githubClient.CreatePR(ctx, commitMsg, prDescription, deploymentBranch, branch)
+	pr, diff, err := d.githubClient.CreatePR(ctx, prTitle, prDescription, deploymentBranch, branch)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create pull request, error: %w", err)
 	}
