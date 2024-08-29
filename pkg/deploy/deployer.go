@@ -13,8 +13,8 @@ import (
 )
 
 type Deployer interface {
-	GetCommitSha(ctx context.Context, serviceName, commit string) (string, string, error)
-	Deploy(serviceName, environment, commit, commitUrl, userFullname, userEmail string) (*github.PullRequest, string, error)
+	GetCommitSha(ctx context.Context, serviceName []string, commit string) (string, string, error)
+	Deploy(serviceNames []string, environment, commit, commitUrl, userFullname, userEmail string) (*github.PullRequest, string, error)
 	Approve(ctx context.Context, pullRequestId int) error
 	Cancel(ctx context.Context, pullRequestId int) error
 }
@@ -36,13 +36,17 @@ type githubDeployer struct {
 	githubClient github.Client
 }
 
-func (d *githubDeployer) GetCommitSha(ctx context.Context, serviceName, commit string) (string, string, error) {
-	service, err := d.LookupService(serviceName)
+func (d *githubDeployer) GetCommitSha(ctx context.Context, servicesNames []string, commit string) (string, string, error) {
+	services, err := d.LookupServices(servicesNames)
 	if err != nil {
 		return "", "", err
 	}
 
-	return d.githubClient.GetCommitSha(ctx, service.GithubOrganization, service.GithubRepository, commit)
+	if !isServicesFromTheSameRepo(services) {
+		return "", "", api.NewValidationErr("services are not from the same repository")
+	}
+
+	return d.githubClient.GetCommitSha(ctx, services[0].GithubOrganization, services[0].GithubRepository, commit)
 }
 
 func (d *githubDeployer) Approve(ctx context.Context, pullRequestId int) error {
@@ -53,46 +57,61 @@ func (d *githubDeployer) Cancel(ctx context.Context, pullRequestId int) error {
 	return d.githubClient.ClosePR(ctx, pullRequestId)
 }
 
-func (d *githubDeployer) Deploy(serviceName, environmentName, commit, commitUrl, userFullname, userEmail string) (*github.PullRequest, string, error) {
+func (d *githubDeployer) Deploy(serviceNames []string, environmentName, commit, commitUrl, userFullname, userEmail string) (*github.PullRequest, string, error) {
 	ctx := context.Background()
 	logWithCtx := log.WithFields(log.Fields{
-		"environment": environmentName,
-		"serviceName": serviceName,
-		"commit":      commit,
+		"environment":  environmentName,
+		"serviceNames": serviceNames,
+		"commit":       commit,
 	})
 
-	service, err := d.LookupService(serviceName)
+	services, err := d.LookupServices(serviceNames)
 	if err != nil {
 		return nil, "", err
 	}
 
-	environment, err := d.LookupEnvironment(service, environmentName)
-	if err != nil {
-		return nil, "", err
-	}
-
-	if len(environment.AllowedBranches) > 0 {
-		logWithCtx.Infof("Validating branch")
-		validBranch, err := d.validateBranch(ctx, service.GithubOrganization, service.GithubRepository, commit, environment.AllowedBranches)
+	serviceToEnvironment := map[*Service]*ServiceEnvironment{}
+	var environments []*ServiceEnvironment
+	for _, service := range services {
+		environment, err := d.LookupEnvironment(service, environmentName)
 		if err != nil {
 			return nil, "", err
 		}
+		serviceToEnvironment[service] = environment
+		environments = append(environments, environment)
+	}
 
-		if !validBranch {
-			return nil, "", api.NewValidationErr("commit is not in allowed branches")
+	if !isEnvironmentsFromTheSameBranch(environments) {
+		return nil, "", api.NewValidationErr("environments have different deployment branches")
+	}
+	deploymentBranch := environments[0].DeploymentRepoBranch
+
+	for service, environment := range serviceToEnvironment {
+		if len(environment.AllowedBranches) > 0 {
+			logWithCtx.Infof("Validating branch")
+			validBranch, err := d.validateBranch(ctx, service.GithubOrganization, service.GithubRepository, commit, environment.AllowedBranches)
+			if err != nil {
+				return nil, "", err
+			}
+
+			if !validBranch {
+				return nil, "", api.NewValidationErr(fmt.Sprintf("commit is not in allowed branches for serivce %s", service.Name))
+			}
 		}
 	}
 
+	servicesString := strings.Join(serviceNames, ",")
+
 	logWithCtx.Infof("Starting deployment")
-	branch := fmt.Sprintf("deploy-%s-%s", serviceName, environmentName)
-	commitMsg := fmt.Sprintf("Deploy %s to %s with version %s triggered by %s (%s)", serviceName, environmentName, commit[:7], userFullname, userEmail)
+	branch := fmt.Sprintf("deploy-%s-%s", servicesString, environmentName)
+	commitMsg := fmt.Sprintf("Deploy %s to %s with version %s triggered by %s (%s)", servicesString, environmentName, commit[:7], userFullname, userEmail)
 
 	baseFolder, err := os.MkdirTemp(d.config.Github.CloneTmpDir, branch+"-*")
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create temp directory, error: %w", err)
 	}
 
-	ref, err := d.githubClient.Clone(ctx, environment.DeploymentRepoBranch, branch, baseFolder)
+	ref, err := d.githubClient.Clone(ctx, deploymentBranch, branch, baseFolder)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to clone deployment repository, error: %w", err)
 	}
@@ -103,23 +122,25 @@ func (d *githubDeployer) Deploy(serviceName, environmentName, commit, commitUrl,
 		}
 	}()
 
-	files, err := d.renderTemplates(baseFolder, environment.TemplatePath, environment.GeneratedPath, serviceName, environmentName, commit)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to render templates, error: %w", err)
+	for service, environment := range serviceToEnvironment {
+		files, err := d.renderTemplates(baseFolder, environment.TemplatePath, environment.GeneratedPath, service.Name, environmentName, commit)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to render templates for serivce %s, error: %w", service.Name, err)
+		}
+
+		tree, err := d.githubClient.CreateTree(ctx, ref, baseFolder, files)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to create diff tree for serivce %s, error: %w", service.Name, err)
+		}
+
+		if err = d.githubClient.PushCommit(ctx, ref, tree, userFullname, userEmail, commitMsg); err != nil {
+			return nil, "", fmt.Errorf("failed to create commit for serivce %s, error: %w", service.Name, err)
+		}
 	}
 
-	tree, err := d.githubClient.CreateTree(ctx, ref, baseFolder, files)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to create diff tree, error: %w", err)
-	}
-
-	if err = d.githubClient.PushCommit(ctx, ref, tree, userFullname, userEmail, commitMsg); err != nil {
-		return nil, "", fmt.Errorf("failed to create commit, error: %w", err)
-	}
-
-	prDescription := fmt.Sprintf("Service Name: %s\nEnvironment: %s\nCommit: [%s](%s)\nRequested by: %s (%s)",
-		serviceName, environmentName, commit[:7], commitUrl, userFullname, userEmail)
-	pr, diff, err := d.githubClient.CreatePR(ctx, commitMsg, prDescription, environment.DeploymentRepoBranch, branch)
+	prDescription := fmt.Sprintf("Service Names: %s\nEnvironment: %s\nCommit: [%s](%s)\nRequested by: %s (%s)",
+		servicesString, environmentName, commit[:7], commitUrl, userFullname, userEmail)
+	pr, diff, err := d.githubClient.CreatePR(ctx, commitMsg, prDescription, deploymentBranch, branch)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create pull request, error: %w", err)
 	}
@@ -188,13 +209,30 @@ func (d *githubDeployer) cleanFolder(folder string) error {
 	return os.MkdirAll(folder, 0755)
 }
 
+func (d *githubDeployer) LookupServices(names []string) ([]*Service, error) {
+	var services []*Service
+	for _, name := range names {
+		service, err := d.LookupService(name)
+		if err != nil {
+			return nil, err
+		}
+		services = append(services, service)
+	}
+
+	if len(services) == 0 {
+		return nil, api.NewValidationErr("no services found")
+	}
+
+	return services, nil
+}
+
 func (d *githubDeployer) LookupService(name string) (*Service, error) {
 	for _, service := range d.config.Services {
 		if strings.ToLower(service.Name) == strings.ToLower(name) {
 			return &service, nil
 		}
 	}
-	return nil, api.NewValidationErr("service does not exist")
+	return nil, api.NewValidationErr(fmt.Sprintf("service %s does not exist", name))
 }
 
 func (d *githubDeployer) LookupEnvironment(service *Service, name string) (*ServiceEnvironment, error) {
@@ -203,7 +241,7 @@ func (d *githubDeployer) LookupEnvironment(service *Service, name string) (*Serv
 			return &environment, nil
 		}
 	}
-	return nil, api.NewValidationErr("environment does not exist")
+	return nil, api.NewValidationErr(fmt.Sprintf("environment %s does not exist for service %s", name, service.Name))
 }
 
 func (d *githubDeployer) renderTemplateFile(absolutePath string, tmpl *template.Template, templateName string, opts options) error {
@@ -223,6 +261,39 @@ func (d *githubDeployer) renderTemplateFile(absolutePath string, tmpl *template.
 	}(file)
 
 	return tmpl.ExecuteTemplate(file, templateName, opts)
+}
+
+func isServicesFromTheSameRepo(services []*Service) bool {
+	if len(services) == 0 {
+		return true
+	}
+
+	org := services[0].GithubOrganization
+	repo := services[0].GithubRepository
+
+	for _, service := range services {
+		if service.GithubOrganization != org || service.GithubRepository != repo {
+			return false
+		}
+	}
+
+	return true
+}
+
+func isEnvironmentsFromTheSameBranch(environments []*ServiceEnvironment) bool {
+	if len(environments) == 0 {
+		return true
+	}
+
+	branch := environments[0].DeploymentRepoBranch
+
+	for _, environment := range environments {
+		if environment.DeploymentRepoBranch != branch {
+			return false
+		}
+	}
+
+	return true
 }
 
 type options struct {

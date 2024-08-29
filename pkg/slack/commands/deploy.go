@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/apono-io/argo-bot/pkg/api"
 	"github.com/apono-io/argo-bot/pkg/github"
+	"github.com/apono-io/argo-bot/pkg/utils"
 	"github.com/shomali11/slacker"
 	log "github.com/sirupsen/logrus"
 	slackgo "github.com/slack-go/slack"
@@ -45,14 +46,16 @@ func (c *controller) handleDeploy(botCtx slacker.BotContext, req slacker.Request
 		WithField("environment", environment).
 		WithField("userCommit", userCommit)
 
+	services := utils.UniqueStrings(strings.Split(serviceName, ","))
+
 	deploymentReq := deploymentRequest{
-		ServiceName: serviceName,
-		Environment: environment,
-		UserId:      botCtx.Event().UserID,
-		Commit:      userCommit,
+		ServiceNames: services,
+		Environment:  environment,
+		UserId:       botCtx.Event().UserID,
+		Commit:       userCommit,
 	}
 
-	commit, commitUrl, err := c.deployer.GetCommitSha(botCtx.Context(), serviceName, userCommit)
+	commit, commitUrl, err := c.deployer.GetCommitSha(botCtx.Context(), services, userCommit)
 	if err != nil {
 		c.sendErrorMessage(botCtx, ctxLogger, deploymentReq, err)
 		return
@@ -77,7 +80,7 @@ func (c *controller) handleDeploy(botCtx slacker.BotContext, req slacker.Request
 	}
 
 	userFullname := fmt.Sprintf("%s %s", profile.FirstName, profile.LastName)
-	pr, diff, err := c.deployer.Deploy(serviceName, environment, commit, commitUrl, userFullname, profile.Email)
+	pr, diff, err := c.deployer.Deploy(services, environment, commit, commitUrl, userFullname, profile.Email)
 	if err != nil {
 		ctxLogger.WithError(err).Error("Failed to deploy")
 		c.sendErrorMessage(botCtx, ctxLogger, deploymentReq, err)
@@ -88,7 +91,7 @@ func (c *controller) handleDeploy(botCtx slacker.BotContext, req slacker.Request
 }
 
 func (c *controller) sendRequestDetails(botCtx slacker.BotContext, ctxLogger *log.Entry, req deploymentRequest) (string, string, error) {
-	ctxLogger.Infof("Got request to deploy %s to %s with version %s from %s", req.ServiceName, req.Environment, req.Commit, req.UserId)
+	ctxLogger.Infof("Got request to deploy %s to %s with version %s from %s", strings.Join(req.ServiceNames, ","), req.Environment, req.Commit, req.UserId)
 	channel, timestamp, _, err := botCtx.SocketModeClient().SendMessage(
 		botCtx.Event().ChannelID,
 		c.messageWithRequestDetails(lightBlueColor, noStatus, req)...,
@@ -105,7 +108,7 @@ func (c *controller) messageWithRequestDetails(requestDetailsColor string, statu
 
 	blocks := []slackgo.Block{
 		slackgo.NewSectionBlock(nil, []*slackgo.TextBlockObject{
-			slackgo.NewTextBlockObject(slackgo.MarkdownType, fmt.Sprintf("*Service:*\n%s", req.ServiceName), false, false),
+			slackgo.NewTextBlockObject(slackgo.MarkdownType, fmt.Sprintf("*Services:*\n%s", strings.Join(req.ServiceNames, ", ")), false, false),
 			slackgo.NewTextBlockObject(slackgo.MarkdownType, fmt.Sprintf("*Environment:*\n%s", req.Environment), false, false),
 			slackgo.NewTextBlockObject(slackgo.MarkdownType, fmt.Sprintf("*Commit:*\n%s", commit), false, false),
 			slackgo.NewTextBlockObject(slackgo.MarkdownType, fmt.Sprintf("*Deployer:*\n<@%s>", req.UserId), false, false),
@@ -284,14 +287,14 @@ func (c *controller) truncateDiff(text string, width int) string {
 }
 
 type deploymentRequest struct {
-	ServiceName string  `json:"service_name"`
-	Environment string  `json:"environment"`
-	CommitUrl   string  `json:"commit_url"`
-	Commit      string  `json:"commit"`
-	UserId      string  `json:"user_id"`
-	Channel     *string `json:"channel,omitempty"`
-	Timestamp   *string `json:"timestamp,omitempty"`
-	PrNumber    int     `json:"pr_number,omitempty"`
+	ServiceNames []string `json:"service_names"`
+	Environment  string   `json:"environment"`
+	CommitUrl    string   `json:"commit_url"`
+	Commit       string   `json:"commit"`
+	UserId       string   `json:"user_id"`
+	Channel      *string  `json:"channel,omitempty"`
+	Timestamp    *string  `json:"timestamp,omitempty"`
+	PrNumber     int      `json:"pr_number,omitempty"`
 }
 
 type approvalActionHandler func(ctx context.Context, pullRequestNumber int) error
