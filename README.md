@@ -58,6 +58,9 @@ deploy:
     - name: <service-name>
       githubOrganization: <service-github-organization>
       githubRepository: <service-github-repository>
+      tags:
+        - <tag-name>
+        - <tag-name>
       environments:
         - name: <environment-name>
           templatePath: "<templates-folder-path>"
