@@ -13,7 +13,7 @@ features:
   slash_commands:
     - command: /<bot-username>
       description: Deploy service
-      usage_hint: deploy [service] [env] [commit]
+      usage_hint: deploy [services/tags] [env] [commit]
       should_escape: true
 oauth_config:
   scopes:

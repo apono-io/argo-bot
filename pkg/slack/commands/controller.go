@@ -14,7 +14,7 @@ func RegisterCommandHandlers(slackerBot *slacker.Slacker, deployer deploy.Deploy
 		Handler: ctrl.handleVersion,
 	})
 
-	slackerBot.Command("deploy <service> <environment> <commit>", &slacker.CommandDefinition{
+	slackerBot.Command("deploy <services> <environment> <commit>", &slacker.CommandDefinition{
 		BlockID:     deploymentApprovalBlockId,
 		Handler:     ctrl.handleDeploy,
 		Interactive: ctrl.handleApproval,
