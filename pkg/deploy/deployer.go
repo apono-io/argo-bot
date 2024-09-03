@@ -8,6 +8,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/template"
 )
@@ -211,13 +212,19 @@ func (d *githubDeployer) cleanFolder(folder string) error {
 }
 
 func (d *githubDeployer) LookupServices(names []string) ([]*Service, error) {
+	uniqueMap := make(map[string]bool)
 	var services []*Service
 	for _, name := range names {
-		service, err := d.LookupService(name)
+		lookupResult, err := d.lookupServicesByTageOrName(name)
 		if err != nil {
 			return nil, err
 		}
-		services = append(services, service)
+		for _, service := range lookupResult {
+			if _, exists := uniqueMap[service.Name]; !exists {
+				uniqueMap[service.Name] = true
+				services = append(services, service)
+			}
+		}
 	}
 
 	if len(services) == 0 {
@@ -227,13 +234,22 @@ func (d *githubDeployer) LookupServices(names []string) ([]*Service, error) {
 	return services, nil
 }
 
-func (d *githubDeployer) LookupService(name string) (*Service, error) {
+func (d *githubDeployer) lookupServicesByTageOrName(name string) ([]*Service, error) {
+	var services []*Service
 	for _, service := range d.config.Services {
-		if strings.ToLower(service.Name) == strings.ToLower(name) {
-			return &service, nil
+		serviceName := strings.ToLower(service.Name)
+		lookupName := strings.ToLower(name)
+		if serviceName == lookupName || slices.ContainsFunc(service.Tags, func(tag string) bool { return strings.ToLower(tag) == lookupName }) {
+			currentService := service
+			services = append(services, &currentService)
 		}
 	}
-	return nil, api.NewValidationErr(fmt.Sprintf("service %s does not exist", name))
+
+	if len(services) == 0 {
+		return nil, api.NewValidationErr(fmt.Sprintf("could not find any service with name or tag of %s", name))
+	}
+
+	return services, nil
 }
 
 func (d *githubDeployer) LookupEnvironment(service *Service, name string) (*ServiceEnvironment, error) {

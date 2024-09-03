@@ -12,6 +12,7 @@ type Service struct {
 	GithubOrganization string               `required:"true"`
 	GithubRepository   string               `required:"true"`
 	Environments       []ServiceEnvironment `required:"true"`
+	Tags               []string
 }
 
 type ServiceEnvironment struct {
