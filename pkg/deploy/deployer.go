@@ -42,7 +42,7 @@ func (d *githubDeployer) GetCommitSha(ctx context.Context, servicesNames []strin
 		return "", "", err
 	}
 
-	if !isServicesFromTheSameRepo(services) {
+	if !areServicesFromSameRepo(services) {
 		return "", "", api.NewValidationErr("services are not from the same repository")
 	}
 
@@ -81,7 +81,7 @@ func (d *githubDeployer) Deploy(serviceNames []string, environmentName, commit, 
 		environments = append(environments, environment)
 	}
 
-	if !isEnvironmentsFromTheSameBranch(environments) {
+	if !areEnvironmentsFromSameBranch(environments) {
 		return nil, "", api.NewValidationErr("environments have different deployment branches")
 	}
 	deploymentBranch := environments[0].DeploymentRepoBranch
@@ -264,7 +264,7 @@ func (d *githubDeployer) renderTemplateFile(absolutePath string, tmpl *template.
 	return tmpl.ExecuteTemplate(file, templateName, opts)
 }
 
-func isServicesFromTheSameRepo(services []*Service) bool {
+func areServicesFromSameRepo(services []*Service) bool {
 	if len(services) == 0 {
 		return true
 	}
@@ -281,7 +281,7 @@ func isServicesFromTheSameRepo(services []*Service) bool {
 	return true
 }
 
-func isEnvironmentsFromTheSameBranch(environments []*ServiceEnvironment) bool {
+func areEnvironmentsFromSameBranch(environments []*ServiceEnvironment) bool {
 	if len(environments) == 0 {
 		return true
 	}
