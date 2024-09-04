@@ -18,6 +18,7 @@ type Deployer interface {
 	Deploy(serviceNames []string, environment, commit, commitUrl, userFullname, userEmail string) (*github.PullRequest, string, error)
 	Approve(ctx context.Context, pullRequestId int) error
 	Cancel(ctx context.Context, pullRequestId int) error
+	ResolveTags(names []string) []string
 }
 
 func New(config Config) (Deployer, error) {
@@ -35,6 +36,24 @@ func New(config Config) (Deployer, error) {
 type githubDeployer struct {
 	config       Config
 	githubClient github.Client
+}
+
+func (d *githubDeployer) ResolveTags(names []string) []string {
+	services, err := d.LookupServices(names)
+	if err != nil {
+		return names
+	}
+
+	if len(services) == 0 {
+		return names
+	}
+
+	var resolvedNames []string
+	for _, service := range services {
+		resolvedNames = append(resolvedNames, service.Name)
+	}
+
+	return resolvedNames
 }
 
 func (d *githubDeployer) GetCommitSha(ctx context.Context, servicesNames []string, commit string) (string, string, error) {

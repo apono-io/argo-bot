@@ -47,9 +47,10 @@ func (c *controller) handleDeploy(botCtx slacker.BotContext, req slacker.Request
 		WithField("userCommit", userCommit)
 
 	services := utils.UniqueStrings(strings.Split(serviceName, ","))
+	resolvedServices := c.deployer.ResolveTags(services)
 
 	deploymentReq := deploymentRequest{
-		ServiceNames: services,
+		ServiceNames: resolvedServices,
 		Environment:  environment,
 		UserId:       botCtx.Event().UserID,
 		Commit:       userCommit,
