@@ -368,6 +368,12 @@ func (d *githubDeployer) createFreezeFile(baseFolder, freezeFilePath string) (st
 	if err != nil {
 		return "", err
 	}
+	defer file.Close()
+
+	warning := "# This file is managed by the GitOps deployment bot.\n# DO NOT EDIT OR DELETE THIS FILE MANUALLY.\n# Use the bot commands to manage service freezes."
+	if _, err := file.WriteString(warning); err != nil {
+		return "", err
+	}
 
 	relPath, err := filepath.Rel(baseFolder, file.Name())
 	if err != nil {
