@@ -126,22 +126,22 @@ func (d *githubDeployer) Deploy(serviceNames []string, environmentName, commit, 
 			}
 
 			if !validBranch {
-				return nil, "", api.NewValidationErr(fmt.Sprintf("commit is not in allowed branches for serivce %s", service.Name))
+				return nil, "", api.NewValidationErr(fmt.Sprintf("commit is not in allowed branches for service %s", service.Name))
 			}
 		}
 
 		freezeFilePath := getFreezeFilePath(*environment)
-		freezed, err := d.checkIfServiceFreezed(baseFolder, freezeFilePath)
+		frozen, err := d.checkIfServiceFrozen(baseFolder, freezeFilePath)
 		if err != nil {
-			return nil, "", fmt.Errorf("failed to check if service %s is freezed, error: %w", service.Name, err)
+			return nil, "", fmt.Errorf("failed to check if service %s is frozen, error: %w", service.Name, err)
 		}
-		if freezed {
+		if frozen {
 			frozenServices = append(frozenServices, service.Name)
 		}
 	}
 
 	if len(frozenServices) > 0 {
-		return nil, "", api.NewValidationErr(fmt.Sprintf("services are freezed, cannot deploy: %s", strings.Join(frozenServices, ", ")))
+		return nil, "", api.NewValidationErr(fmt.Sprintf("cannot deploy: services are frozen: %s", strings.Join(frozenServices, ", ")))
 	}
 
 	logWithCtx.Infof("Starting deployment")
@@ -150,17 +150,17 @@ func (d *githubDeployer) Deploy(serviceNames []string, environmentName, commit, 
 	for service, environment := range serviceToEnvironment {
 		files, err := d.renderTemplates(baseFolder, environment.TemplatePath, environment.GeneratedPath, service.Name, environmentName, commit)
 		if err != nil {
-			return nil, "", fmt.Errorf("failed to render templates for serivce %s, error: %w", service.Name, err)
+			return nil, "", fmt.Errorf("failed to render templates for service %s, error: %w", service.Name, err)
 		}
 
 		tree, err := d.githubClient.CreateTree(ctx, ref, baseFolder, files)
 		if err != nil {
-			return nil, "", fmt.Errorf("failed to create diff tree for serivce %s, error: %w", service.Name, err)
+			return nil, "", fmt.Errorf("failed to create diff tree for service %s, error: %w", service.Name, err)
 		}
 
 		commitMsg := fmt.Sprintf("Deploy %s to %s with version %s triggered by %s (%s)", service.Name, environmentName, commit[:7], userFullname, userEmail)
 		if err = d.githubClient.PushCommit(ctx, ref, tree, userFullname, userEmail, commitMsg); err != nil {
-			return nil, "", fmt.Errorf("failed to create commit for serivce %s, error: %w", service.Name, err)
+			return nil, "", fmt.Errorf("failed to create commit for service %s, error: %w", service.Name, err)
 		}
 	}
 
@@ -181,9 +181,8 @@ func (d *githubDeployer) Freeze(serviceNames []string, environment, userFullname
 	logWithCtx := log.WithFields(log.Fields{
 		"environment":  environment,
 		"serviceNames": serviceNames,
+		"action":       action,
 	})
-
-	freezeActionMessage := string(action)
 
 	serviceToEnvironment, deploymentBranch, err := d.resolveServicesAndEnvironment(serviceNames, environment)
 	if err != nil {
@@ -192,9 +191,9 @@ func (d *githubDeployer) Freeze(serviceNames []string, environment, userFullname
 
 	servicesString := strings.Join(serviceNames, ",")
 
-	logWithCtx.Infof(fmt.Sprintf("Starting %s", freezeActionMessage))
-	branch := fmt.Sprintf("%s-%s-%s", freezeActionMessage, servicesString, environment)
-	prTitle := fmt.Sprintf("%s %s to %s triggered by %s (%s)", freezeActionMessage, servicesString, environment, userFullname, userEmail)
+	logWithCtx.Infof("Starting %s operation", action)
+	branch := fmt.Sprintf("%s-%s-%s", action, servicesString, environment)
+	prTitle := fmt.Sprintf("%s %s to %s triggered by %s (%s)", action, servicesString, environment, userFullname, userEmail)
 
 	baseFolder, ref, err := d.cloneBranch(ctx, branch, deploymentBranch)
 	if err != nil {
@@ -210,12 +209,12 @@ func (d *githubDeployer) Freeze(serviceNames []string, environment, userFullname
 	changesDetected := false
 
 	for service, environment := range serviceToEnvironment {
-		commitMsg := fmt.Sprintf("%s %s to %s triggered by %s (%s)", freezeActionMessage, service.Name, environment, userFullname, userEmail)
+		commitMsg := fmt.Sprintf("%s %s to %s triggered by %s (%s)", action, service.Name, environment, userFullname, userEmail)
 		freezeFilePath := getFreezeFilePath(*environment)
 
 		var freezeFile string
 		if action == FreezeActionUnfreeze {
-			frozen, err := d.checkIfServiceFreezed(baseFolder, freezeFilePath)
+			frozen, err := d.checkIfServiceFrozen(baseFolder, freezeFilePath)
 			if err != nil {
 				return nil, "", fmt.Errorf("failed to check if service %s is frozen, error: %w", service.Name, err)
 			}
@@ -224,22 +223,22 @@ func (d *githubDeployer) Freeze(serviceNames []string, environment, userFullname
 			}
 			freezeFile, err = d.removeFreezeFile(baseFolder, freezeFilePath)
 			if err != nil {
-				return nil, "", fmt.Errorf("failed to remove freeze file for serivce %s, error: %w", service.Name, err)
+				return nil, "", fmt.Errorf("failed to remove freeze file for service %s, error: %w", service.Name, err)
 			}
 		} else {
 			freezeFile, err = d.createFreezeFile(baseFolder, freezeFilePath)
 			if err != nil {
-				return nil, "", fmt.Errorf("failed to create freeze file for serivce %s, error: %w", service.Name, err)
+				return nil, "", fmt.Errorf("failed to create freeze file for service %s, error: %w", service.Name, err)
 			}
 		}
 
 		tree, err := d.githubClient.CreateTree(ctx, ref, baseFolder, []string{freezeFile})
 		if err != nil {
-			return nil, "", fmt.Errorf("failed to create diff tree for serivce %s, error: %w", service.Name, err)
+			return nil, "", fmt.Errorf("failed to create diff tree for service %s, error: %w", service.Name, err)
 		}
 
 		if err = d.githubClient.PushCommit(ctx, ref, tree, userFullname, userEmail, commitMsg); err != nil {
-			return nil, "", fmt.Errorf("failed to create commit for serivce %s, error: %w", service.Name, err)
+			return nil, "", fmt.Errorf("failed to create commit for service %s, error: %w", service.Name, err)
 		}
 		changesDetected = true
 	}
@@ -304,7 +303,7 @@ func (d *githubDeployer) validateBranch(ctx context.Context, organization, repos
 	return d.githubClient.CommitInBranch(ctx, organization, repository, commit, branches)
 }
 
-func (d *githubDeployer) checkIfServiceFreezed(baseFolder, freezeFilePath string) (bool, error) {
+func (d *githubDeployer) checkIfServiceFrozen(baseFolder, freezeFilePath string) (bool, error) {
 	freezeFile := filepath.Join(baseFolder, freezeFilePath, freezeFileName)
 	_, err := os.Stat(freezeFile)
 	if err != nil {
@@ -385,11 +384,11 @@ func (d *githubDeployer) removeFreezeFile(baseFolder, freezeFilePath string) (st
 		return "", err
 	}
 
-	freezed, err := d.checkIfServiceFreezed(baseFolder, freezeFilePath)
+	frozen, err := d.checkIfServiceFrozen(baseFolder, freezeFilePath)
 	if err != nil {
 		return "", err
 	}
-	if !freezed {
+	if !frozen {
 		return relPath, nil
 	}
 
