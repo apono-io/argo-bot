@@ -23,6 +23,10 @@ features:
       description: Unfreeze service deployment
       usage_hint: unfreeze [services/tags] [env]
       should_escape: true
+    - command: /<bot-username>
+      description: List all services status
+      usage_hint: "list (or 'list services [services/tags]')"
+      should_escape: true
 oauth_config:
   scopes:
     bot:

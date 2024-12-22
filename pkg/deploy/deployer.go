@@ -31,6 +31,9 @@ type Deployer interface {
 	Approve(ctx context.Context, pullRequestId int) error
 	Cancel(ctx context.Context, pullRequestId int) error
 	ResolveTags(names []string) []string
+	ListEnvironments(service string) ([]ServiceEnvironment, error)
+	ListServices() []Service
+	ListEnvironmentsFrozenStatus(serviceNames []string) (map[string]map[string]bool, error)
 }
 
 func New(config Config) (Deployer, error) {
@@ -465,6 +468,90 @@ func (d *githubDeployer) LookupEnvironment(service *Service, name string) (*Serv
 	return nil, api.NewValidationErr(fmt.Sprintf("environment %s does not exist for service %s", name, service.Name))
 }
 
+func (d *githubDeployer) ListEnvironmentsFrozenStatus(serviceNames []string) (map[string]map[string]bool, error) {
+	// Find all requested services
+	services, err := d.LookupServices(serviceNames)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create a map of branch -> environments to check
+	branchEnvironments := make(map[string][]environmentToCheck)
+	for _, service := range services {
+		for _, env := range service.Environments {
+			branchEnvironments[env.DeploymentRepoBranch] = append(
+				branchEnvironments[env.DeploymentRepoBranch],
+				environmentToCheck{
+					ServiceName:    service.Name,
+					Environment:    env,
+					FreezeFilePath: getFreezeFilePath(env),
+				},
+			)
+		}
+	}
+
+	// Initialize result map
+	frozenStatus := make(map[string]map[string]bool)
+
+	// Check each branch
+	for branch, environments := range branchEnvironments {
+		branchStatus, err := d.checkBranchEnvironments(branch, environments)
+		if err != nil {
+			return nil, err
+		}
+
+		// Merge branch results into final map
+		for service, envMap := range branchStatus {
+			if frozenStatus[service] == nil {
+				frozenStatus[service] = make(map[string]bool)
+			}
+			for env, status := range envMap {
+				frozenStatus[service][env] = status
+			}
+		}
+	}
+
+	return frozenStatus, nil
+}
+
+func (d *githubDeployer) checkBranchEnvironments(branch string, environments []environmentToCheck) (map[string]map[string]bool, error) {
+	baseFolder, _, err := d.cloneBranch(context.Background(), "check-freeze-status", branch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to clone repository for branch %s: %w", branch, err)
+	}
+
+	defer func() {
+		err := os.RemoveAll(baseFolder)
+		if err != nil {
+			log.WithError(err).Error("failed to remove source folder")
+		}
+	}()
+
+	frozenStatus := make(map[string]map[string]bool)
+
+	for _, env := range environments {
+		frozen, err := d.checkIfServiceFrozen(baseFolder, env.FreezeFilePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check freeze status for service %s environment %s: %w",
+				env.ServiceName, env.Environment.Name, err)
+		}
+
+		if frozenStatus[env.ServiceName] == nil {
+			frozenStatus[env.ServiceName] = make(map[string]bool)
+		}
+
+		frozenStatus[env.ServiceName][env.Environment.Name] = frozen
+	}
+
+	return frozenStatus, nil
+}
+
+type environmentToCheck struct {
+	ServiceName    string
+	Environment    ServiceEnvironment
+	FreezeFilePath string
+}
+
 func (d *githubDeployer) renderTemplateFile(absolutePath string, tmpl *template.Template, templateName string, opts options) error {
 	file, err := os.OpenFile(absolutePath, os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -529,4 +616,17 @@ type options struct {
 	ServiceName string
 	Environment string
 	Version     string
+}
+
+func (d *githubDeployer) ListEnvironments(service string) ([]ServiceEnvironment, error) {
+	for _, s := range d.config.Services {
+		if s.Name == service {
+			return s.Environments, nil
+		}
+	}
+	return nil, api.NewValidationErr(fmt.Sprintf("service %s not found", service))
+}
+
+func (d *githubDeployer) ListServices() []Service {
+	return d.config.Services
 }

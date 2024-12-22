@@ -31,6 +31,18 @@ func RegisterCommandHandlers(slackerBot *slacker.Slacker, deployer deploy.Deploy
 		Handler:     ctrl.handleUnfreeze,
 		Interactive: ctrl.handleFreezeApproval,
 	})
+
+	slackerBot.Command("list", &slacker.CommandDefinition{
+		Description: "List status of all services",
+		Handler:     ctrl.handleList,
+		Examples:    []string{"list"},
+	})
+
+	slackerBot.Command("list <services>", &slacker.CommandDefinition{
+		Description: "List status of specific services or tags",
+		Handler:     ctrl.handleList,
+		Examples:    []string{"list services service1,service2", "list services backend-tag"},
+	})
 }
 
 type controller struct {
