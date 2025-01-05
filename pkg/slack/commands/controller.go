@@ -19,6 +19,18 @@ func RegisterCommandHandlers(slackerBot *slacker.Slacker, deployer deploy.Deploy
 		Handler:     ctrl.handleDeploy,
 		Interactive: ctrl.handleApproval,
 	})
+
+	slackerBot.Command("freeze <services> <environment>", &slacker.CommandDefinition{
+		BlockID:     freezeApprovalBlockId,
+		Handler:     ctrl.handleFreeze,
+		Interactive: ctrl.handleFreezeApproval,
+	})
+
+	slackerBot.Command("unfreeze <services> <environment>", &slacker.CommandDefinition{
+		BlockID:     freezeApprovalBlockId,
+		Handler:     ctrl.handleUnfreeze,
+		Interactive: ctrl.handleFreezeApproval,
+	})
 }
 
 type controller struct {

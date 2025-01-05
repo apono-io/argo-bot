@@ -6,10 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/apono-io/argo-bot/pkg/api"
-	"github.com/bradleyfalzon/ghinstallation/v2"
-	"github.com/google/go-github/v45/github"
-	log "github.com/sirupsen/logrus"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -18,6 +14,11 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/apono-io/argo-bot/pkg/api"
+	"github.com/bradleyfalzon/ghinstallation/v2"
+	"github.com/google/go-github/v45/github"
+	log "github.com/sirupsen/logrus"
 )
 
 type Client interface {
@@ -145,7 +146,23 @@ func (c *apiClient) CreateTree(ctx context.Context, ref *github.Reference, baseF
 
 	// Load each file into the tree.
 	for _, file := range files {
-		content, err := ioutil.ReadFile(filepath.Join(baseFolder, file))
+		fullPath := filepath.Join(baseFolder, file)
+		_, err := os.Stat(fullPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// If the file doesn't exist, create a deletion tree entry
+				entries = append(entries, &github.TreeEntry{
+					Path: github.String(file),
+					Mode: github.String("100644"),
+					Type: github.String("blob"),
+					SHA:  nil, // nil SHA indicates deletion
+				})
+				continue
+			}
+			return nil, err
+		}
+
+		content, err := ioutil.ReadFile(fullPath)
 		if err != nil {
 			return nil, err
 		}

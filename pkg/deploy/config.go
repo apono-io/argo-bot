@@ -21,4 +21,5 @@ type ServiceEnvironment struct {
 	GeneratedPath        string `required:"true"`
 	AllowedBranches      []string
 	DeploymentRepoBranch string `default:""`
+	FreezeFilePath       string `default:""`
 }

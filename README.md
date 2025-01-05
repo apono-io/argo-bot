@@ -96,3 +96,35 @@ helm install argo-bot ./helm/charts/argo-bot \
   --set configMapName=argo-bot-config \
   --wait
 ```
+
+## Usage Examples
+
+### Deploy Command
+Deploy a service to an environment using a commit hash, tag, or branch name:
+```
+/deploy service-name staging v1.0.0
+```
+_Note: You can use service names or tags defined in the configuration. Multiple services/tags can be specified by separating them with commas (e.g., `service1,service2` or `tag1,tag2`)_
+
+### Freeze/Unfreeze Commands
+Freeze deployments for a service in an environment:
+```
+/freeze service-name production
+```
+
+Unfreeze deployments for a service:
+```
+/unfreeze service-name production
+```
+_Note: You can use service names or tags defined in the configuration. Multiple services/tags can be specified by separating them with commas (e.g., `service1,service2` or `tag1,tag2`)_
+
+### Version Command
+Get the current version of the bot:
+```
+/version
+```
+
+For all commands that create changes (deploy, freeze, unfreeze), the bot will:
+1. Create a pull request with the changes
+2. Show you a preview of the changes
+3. Provide Approve/Deny buttons to confirm or cancel the action

@@ -15,6 +15,14 @@ features:
       description: Deploy service
       usage_hint: deploy [services/tags] [env] [commit]
       should_escape: true
+    - command: /<bot-username>
+      description: Freeze service deployment
+      usage_hint: freeze [services/tags] [env]
+      should_escape: true
+    - command: /<bot-username>
+      description: Unfreeze service deployment
+      usage_hint: unfreeze [services/tags] [env]
+      should_escape: true
 oauth_config:
   scopes:
     bot:
