@@ -124,6 +124,18 @@ Get the current version of the bot:
 /version
 ```
 
+### List Command
+View the status of all services:
+```
+/list
+```
+
+View status of specific services or tags:
+```
+/list service-name
+```
+_Note: You can list multiple services/tags by separating them with commas (e.g., `service1,service2` or `tag1,tag2`)_
+
 For all commands that create changes (deploy, freeze, unfreeze), the bot will:
 1. Create a pull request with the changes
 2. Show you a preview of the changes
