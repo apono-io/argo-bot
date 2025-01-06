@@ -469,13 +469,11 @@ func (d *githubDeployer) LookupEnvironment(service *Service, name string) (*Serv
 }
 
 func (d *githubDeployer) ListEnvironmentsFrozenStatus(serviceNames []string) (map[string]map[string]bool, error) {
-	// Find all requested services
 	services, err := d.LookupServices(serviceNames)
 	if err != nil {
 		return nil, err
 	}
 
-	// Create a map of branch -> environments to check
 	branchEnvironments := make(map[string][]environmentToCheck)
 	for _, service := range services {
 		for _, env := range service.Environments {
@@ -490,17 +488,14 @@ func (d *githubDeployer) ListEnvironmentsFrozenStatus(serviceNames []string) (ma
 		}
 	}
 
-	// Initialize result map
 	frozenStatus := make(map[string]map[string]bool)
 
-	// Check each branch
 	for branch, environments := range branchEnvironments {
 		branchStatus, err := d.checkBranchEnvironments(branch, environments)
 		if err != nil {
 			return nil, err
 		}
 
-		// Merge branch results into final map
 		for service, envMap := range branchStatus {
 			if frozenStatus[service] == nil {
 				frozenStatus[service] = make(map[string]bool)
