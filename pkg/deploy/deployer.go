@@ -38,7 +38,6 @@ type Deployer interface {
 	Approve(ctx context.Context, pullRequestId int) error
 	Cancel(ctx context.Context, pullRequestId int) error
 	ResolveTags(names []string) []string
-	ListEnvironments(service string) ([]ServiceEnvironment, error)
 	ListServices() []Service
 	ListServiceEnvironmentsStatus(serviceNames []string) (map[ServiceName][]EnvironmentStatus, error)
 }
@@ -625,15 +624,6 @@ type options struct {
 	ServiceName string
 	Environment string
 	Version     string
-}
-
-func (d *githubDeployer) ListEnvironments(service string) ([]ServiceEnvironment, error) {
-	for _, s := range d.config.Services {
-		if s.Name == service {
-			return s.Environments, nil
-		}
-	}
-	return nil, api.NewValidationErr(fmt.Sprintf("service %s not found", service))
 }
 
 func (d *githubDeployer) ListServices() []Service {
