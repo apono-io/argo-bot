@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"github.com/apono-io/argo-bot/pkg/deploy"
 	"strings"
 
 	"github.com/apono-io/argo-bot/pkg/utils"
@@ -20,55 +21,50 @@ func (c *controller) handleList(botCtx slacker.BotContext, request slacker.Reque
 		ctxLogger = ctxLogger.WithField("servicesArg", servicesArg)
 	}
 
-	serviceNames := c.resolveServiceNames(servicesArg)
+	serviceNamesToList := c.resolveServiceNames(servicesArg)
 
 	var blocks []slack.Block
 	blocks = append(blocks, slack.NewHeaderBlock(
 		slack.NewTextBlockObject("plain_text", "Services Status Overview", false, false),
 	))
 
-	frozenStatus, err := c.deployer.ListEnvironmentsFrozenStatus(serviceNames)
+	serviceToEnvStatuses, err := c.deployer.ListServiceEnvironmentsStatus(serviceNamesToList)
 	if err != nil {
 		ctxLogger.WithError(err).Error("Failed to get environments frozen status")
 		c.sendListErrorMessage(botCtx, ctxLogger, err)
 		return
 	}
 
-	allServices := c.deployer.ListServices()
-	for _, service := range allServices {
-		if frozenStatus[service.Name] == nil {
-			ctxLogger.WithField("service", service.Name).Error("No frozen status found for service")
+	serviceNameToConfig := make(map[string]deploy.Service)
+	for _, serviceConfig := range c.deployer.ListServices() {
+		serviceNameToConfig[serviceConfig.Name] = serviceConfig
+	}
+
+	for _, service := range serviceNamesToList {
+		serviceConfig := serviceNameToConfig[service]
+		envStatuses := serviceToEnvStatuses[deploy.ServiceName(service)]
+
+		if envStatuses == nil {
+			ctxLogger.WithField("service", service).Error("No environments statuses found for service")
 			continue
 		}
 
-		envs, err := c.deployer.ListEnvironments(service.Name)
-		if err != nil {
-			ctxLogger.WithError(err).
-				WithField("service", service.Name).
-				Error("Failed to list environments for service")
-			c.sendListErrorMessage(botCtx, ctxLogger, err)
-			continue
-		}
-
-		var envStatus []string
-		for _, env := range envs {
-			status := fmt.Sprintf("*%s*: %s",
-				env.Name,
-				formatFreezeStatus(frozenStatus[service.Name][env.Name]),
-			)
-			envStatus = append(envStatus, status)
+		var envStatusStrings []string
+		for _, envStatus := range envStatuses {
+			status := fmt.Sprintf("*%s*: %s", envStatus.EnvironmentName, formatFreezeStatus(envStatus.IsFrozen))
+			envStatusStrings = append(envStatusStrings, status)
 		}
 
 		tagsStr := ""
-		if len(service.Tags) > 0 {
-			tagsStr = fmt.Sprintf("\nTags: `%s`", strings.Join(service.Tags, "`, `"))
+		if len(serviceConfig.Tags) > 0 {
+			tagsStr = fmt.Sprintf("\nTags: `%s`", strings.Join(serviceConfig.Tags, "`, `"))
 		}
 
 		serviceSection := slack.NewSectionBlock(
 			slack.NewTextBlockObject("mrkdwn",
 				fmt.Sprintf("🔷 *%s*\n%s%s",
-					service.Name,
-					strings.Join(envStatus, "\n"),
+					serviceConfig.Name,
+					strings.Join(envStatusStrings, "\n"),
 					tagsStr,
 				),
 				false, false,

@@ -16,6 +16,8 @@ import (
 )
 
 type FreezeAction string
+type ServiceName string
+type EnvironmentName string
 
 const (
 	FreezeActionFreeze   FreezeAction = "freeze"
@@ -23,6 +25,11 @@ const (
 )
 
 const freezeFileName = ".freeze"
+
+type EnvironmentStatus struct {
+	EnvironmentName string
+	IsFrozen        bool
+}
 
 type Deployer interface {
 	GetCommitSha(ctx context.Context, serviceName []string, commit string) (string, string, error)
@@ -33,7 +40,7 @@ type Deployer interface {
 	ResolveTags(names []string) []string
 	ListEnvironments(service string) ([]ServiceEnvironment, error)
 	ListServices() []Service
-	ListEnvironmentsFrozenStatus(serviceNames []string) (map[string]map[string]bool, error)
+	ListServiceEnvironmentsStatus(serviceNames []string) (map[ServiceName][]EnvironmentStatus, error)
 }
 
 func New(config Config) (Deployer, error) {
@@ -468,18 +475,18 @@ func (d *githubDeployer) LookupEnvironment(service *Service, name string) (*Serv
 	return nil, api.NewValidationErr(fmt.Sprintf("environment %s does not exist for service %s", name, service.Name))
 }
 
-func (d *githubDeployer) ListEnvironmentsFrozenStatus(serviceNames []string) (map[string]map[string]bool, error) {
+func (d *githubDeployer) ListServiceEnvironmentsStatus(serviceNames []string) (map[ServiceName][]EnvironmentStatus, error) {
 	services, err := d.LookupServices(serviceNames)
 	if err != nil {
 		return nil, err
 	}
 
-	branchEnvironments := make(map[string][]environmentToCheck)
+	branchEnvironments := make(map[string][]serviceEnvToCheck)
 	for _, service := range services {
 		for _, env := range service.Environments {
 			branchEnvironments[env.DeploymentRepoBranch] = append(
 				branchEnvironments[env.DeploymentRepoBranch],
-				environmentToCheck{
+				serviceEnvToCheck{
 					ServiceName:    service.Name,
 					Environment:    env,
 					FreezeFilePath: getFreezeFilePath(env),
@@ -488,28 +495,31 @@ func (d *githubDeployer) ListEnvironmentsFrozenStatus(serviceNames []string) (ma
 		}
 	}
 
-	frozenStatus := make(map[string]map[string]bool)
+	serviceToEnvStatuses := make(map[ServiceName][]EnvironmentStatus)
 
 	for branch, environments := range branchEnvironments {
-		branchStatus, err := d.checkBranchEnvironments(branch, environments)
+		serviceToEnvWithStatus, err := d.getEnvironmentsStatusForBranch(branch, environments)
 		if err != nil {
 			return nil, err
 		}
 
-		for service, envMap := range branchStatus {
-			if frozenStatus[service] == nil {
-				frozenStatus[service] = make(map[string]bool)
+		for service, envToFreezeStatus := range serviceToEnvWithStatus {
+			envStatuses := make([]EnvironmentStatus, 0, len(envToFreezeStatus))
+			for env, isFrozen := range envToFreezeStatus {
+				envStatuses = append(envStatuses, EnvironmentStatus{
+					EnvironmentName: string(env),
+					IsFrozen:        isFrozen,
+				})
 			}
-			for env, status := range envMap {
-				frozenStatus[service][env] = status
-			}
+
+			serviceToEnvStatuses[service] = envStatuses
 		}
 	}
 
-	return frozenStatus, nil
+	return serviceToEnvStatuses, nil
 }
 
-func (d *githubDeployer) checkBranchEnvironments(branch string, environments []environmentToCheck) (map[string]map[string]bool, error) {
+func (d *githubDeployer) getEnvironmentsStatusForBranch(branch string, environments []serviceEnvToCheck) (map[ServiceName]map[EnvironmentName]bool, error) {
 	baseFolder, _, err := d.cloneBranch(context.Background(), "check-freeze-status", branch)
 	if err != nil {
 		return nil, fmt.Errorf("failed to clone repository for branch %s: %w", branch, err)
@@ -522,26 +532,30 @@ func (d *githubDeployer) checkBranchEnvironments(branch string, environments []e
 		}
 	}()
 
-	frozenStatus := make(map[string]map[string]bool)
+	frozenStatus := make(map[ServiceName]map[EnvironmentName]bool)
 
 	for _, env := range environments {
 		frozen, err := d.checkIfServiceFrozen(baseFolder, env.FreezeFilePath)
 		if err != nil {
-			return nil, fmt.Errorf("failed to check freeze status for service %s environment %s: %w",
-				env.ServiceName, env.Environment.Name, err)
+			return nil, fmt.Errorf(
+				"failed to check freeze status for service %s environment %s: %w",
+				env.ServiceName, env.Environment.Name, err,
+			)
 		}
 
-		if frozenStatus[env.ServiceName] == nil {
-			frozenStatus[env.ServiceName] = make(map[string]bool)
+		serviceName := ServiceName(env.ServiceName)
+		envName := EnvironmentName(env.Environment.Name)
+		if frozenStatus[serviceName] == nil {
+			frozenStatus[serviceName] = make(map[EnvironmentName]bool)
 		}
 
-		frozenStatus[env.ServiceName][env.Environment.Name] = frozen
+		frozenStatus[serviceName][envName] = frozen
 	}
 
 	return frozenStatus, nil
 }
 
-type environmentToCheck struct {
+type serviceEnvToCheck struct {
 	ServiceName    string
 	Environment    ServiceEnvironment
 	FreezeFilePath string
