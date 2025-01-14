@@ -16,6 +16,8 @@ import (
 )
 
 type FreezeAction string
+type ServiceName string
+type EnvironmentName string
 
 const (
 	FreezeActionFreeze   FreezeAction = "freeze"
@@ -24,6 +26,11 @@ const (
 
 const freezeFileName = ".freeze"
 
+type EnvironmentStatus struct {
+	EnvironmentName string
+	IsFrozen        bool
+}
+
 type Deployer interface {
 	GetCommitSha(ctx context.Context, serviceName []string, commit string) (string, string, error)
 	Deploy(serviceNames []string, environment, commit, commitUrl, userFullname, userEmail string) (*github.PullRequest, string, error)
@@ -31,6 +38,8 @@ type Deployer interface {
 	Approve(ctx context.Context, pullRequestId int) error
 	Cancel(ctx context.Context, pullRequestId int) error
 	ResolveTags(names []string) []string
+	ListServices() []Service
+	ListServiceEnvironmentsStatus(serviceNames []string) (map[ServiceName][]EnvironmentStatus, error)
 }
 
 func New(config Config) (Deployer, error) {
@@ -465,6 +474,92 @@ func (d *githubDeployer) LookupEnvironment(service *Service, name string) (*Serv
 	return nil, api.NewValidationErr(fmt.Sprintf("environment %s does not exist for service %s", name, service.Name))
 }
 
+func (d *githubDeployer) ListServiceEnvironmentsStatus(serviceNames []string) (map[ServiceName][]EnvironmentStatus, error) {
+	services, err := d.LookupServices(serviceNames)
+	if err != nil {
+		return nil, err
+	}
+
+	branchEnvironments := make(map[string][]serviceEnvToCheck)
+	for _, service := range services {
+		for _, env := range service.Environments {
+			branchEnvironments[env.DeploymentRepoBranch] = append(
+				branchEnvironments[env.DeploymentRepoBranch],
+				serviceEnvToCheck{
+					ServiceName:    service.Name,
+					Environment:    env,
+					FreezeFilePath: getFreezeFilePath(env),
+				},
+			)
+		}
+	}
+
+	serviceToEnvStatuses := make(map[ServiceName][]EnvironmentStatus)
+
+	for branch, environments := range branchEnvironments {
+		serviceToEnvWithStatus, err := d.getEnvironmentsStatusForBranch(branch, environments)
+		if err != nil {
+			return nil, err
+		}
+
+		for service, envToFreezeStatus := range serviceToEnvWithStatus {
+			envStatuses := make([]EnvironmentStatus, 0, len(envToFreezeStatus))
+			for env, isFrozen := range envToFreezeStatus {
+				envStatuses = append(envStatuses, EnvironmentStatus{
+					EnvironmentName: string(env),
+					IsFrozen:        isFrozen,
+				})
+			}
+
+			serviceToEnvStatuses[service] = envStatuses
+		}
+	}
+
+	return serviceToEnvStatuses, nil
+}
+
+func (d *githubDeployer) getEnvironmentsStatusForBranch(branch string, environments []serviceEnvToCheck) (map[ServiceName]map[EnvironmentName]bool, error) {
+	baseFolder, _, err := d.cloneBranch(context.Background(), "check-freeze-status", branch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to clone repository for branch %s: %w", branch, err)
+	}
+
+	defer func() {
+		err := os.RemoveAll(baseFolder)
+		if err != nil {
+			log.WithError(err).Error("failed to remove source folder")
+		}
+	}()
+
+	frozenStatus := make(map[ServiceName]map[EnvironmentName]bool)
+
+	for _, env := range environments {
+		frozen, err := d.checkIfServiceFrozen(baseFolder, env.FreezeFilePath)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"failed to check freeze status for service %s environment %s: %w",
+				env.ServiceName, env.Environment.Name, err,
+			)
+		}
+
+		serviceName := ServiceName(env.ServiceName)
+		envName := EnvironmentName(env.Environment.Name)
+		if frozenStatus[serviceName] == nil {
+			frozenStatus[serviceName] = make(map[EnvironmentName]bool)
+		}
+
+		frozenStatus[serviceName][envName] = frozen
+	}
+
+	return frozenStatus, nil
+}
+
+type serviceEnvToCheck struct {
+	ServiceName    string
+	Environment    ServiceEnvironment
+	FreezeFilePath string
+}
+
 func (d *githubDeployer) renderTemplateFile(absolutePath string, tmpl *template.Template, templateName string, opts options) error {
 	file, err := os.OpenFile(absolutePath, os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -529,4 +624,8 @@ type options struct {
 	ServiceName string
 	Environment string
 	Version     string
+}
+
+func (d *githubDeployer) ListServices() []Service {
+	return d.config.Services
 }
