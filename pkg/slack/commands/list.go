@@ -12,6 +12,8 @@ import (
 	"github.com/slack-go/slack"
 )
 
+const allowedMessageBlocksSize = 45
+
 func (c *controller) handleList(botCtx slacker.BotContext, request slacker.Request, response slacker.ResponseWriter) {
 	ctxLogger := log.WithField("slackUserId", botCtx.Event().UserID).
 		WithField("slackChannelId", botCtx.Event().ChannelID)
@@ -71,6 +73,18 @@ func (c *controller) handleList(botCtx slacker.BotContext, request slacker.Reque
 			),
 			nil, nil,
 		)
+
+		if len(blocks) >= allowedMessageBlocksSize {
+			blocks = append(blocks, slack.NewSectionBlock(
+				slack.NewTextBlockObject("mrkdwn",
+					"Message is too long, please use `services` argument to filter the list",
+					false, false),
+				nil, nil),
+			)
+
+			break
+		}
+
 		blocks = append(blocks, serviceSection)
 		blocks = append(blocks, slack.NewDividerBlock())
 	}
