@@ -338,37 +338,108 @@ func (d *githubDeployer) renderTemplates(baseFolder, templatePath, generatedPath
 		return nil, err
 	}
 
-	tmpl := template.New("gotpl")
-	tmpl.Option("missingkey=error")
-
 	var renderedFiles []string
-	opts := options{
-		ServiceName: serviceName,
-		Environment: environment,
-		Version:     commit,
-	}
-	for _, file := range templateFiles {
-		_, err = tmpl.New(file.Name()).ParseFiles(filepath.Join(templateFolder, file.Name()))
-		if err != nil {
-			return nil, err
-		}
+
+	// Static variable names to replace
+	staticReplacements := map[string]string{
+		"PLACEHOLDER_VERSION": commit,
 	}
 
 	for _, file := range templateFiles {
-		absolutePath := filepath.Join(generatedFolder, file.Name())
-		relPath, err := filepath.Rel(baseFolder, absolutePath)
+		if file.IsDir() {
+			continue
+		}
+
+		sourcePath := filepath.Join(templateFolder, file.Name())
+		destPath := filepath.Join(generatedFolder, file.Name())
+
+		relPath, err := filepath.Rel(baseFolder, destPath)
 		if err != nil {
 			return nil, err
 		}
-
 		renderedFiles = append(renderedFiles, relPath)
-		err = d.renderTemplateFile(absolutePath, tmpl, file.Name(), opts)
+
+		// Try static variable replacement first
+		if d.processFileWithStaticReplacement(sourcePath, destPath, staticReplacements) {
+			log.WithFields(log.Fields{
+				"file": file.Name(),
+				"type": "static-replacement",
+			}).Debug("Processed file with static variable replacement")
+			continue
+		}
+
+		// Fallback to Go template processing
+		log.WithFields(log.Fields{
+			"file": file.Name(),
+			"type": "go-template",
+		}).Debug("Processing file with Go template")
+
+		tmpl := template.New("gotpl")
+		tmpl.Option("missingkey=error")
+
+		_, err = tmpl.New(file.Name()).ParseFiles(sourcePath)
+		if err != nil {
+			return nil, err
+		}
+
+		opts := options{
+			ServiceName: serviceName,
+			Environment: environment,
+			Version:     commit,
+		}
+
+		err = d.renderTemplateFile(destPath, tmpl, file.Name(), opts)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	return renderedFiles, nil
+}
+
+// processFileWithStaticReplacement attempts to replace static variable names in a file
+// Returns true if static variables were found and replaced, false otherwise
+func (d *githubDeployer) processFileWithStaticReplacement(sourcePath, destPath string, replacements map[string]string) bool {
+	content, err := os.ReadFile(sourcePath)
+	if err != nil {
+		log.WithError(err).WithField("file", sourcePath).Error("Failed to read source file for static replacement")
+		return false
+	}
+
+	originalContent := string(content)
+	modifiedContent := originalContent
+	hasStaticVariables := false
+
+	// Check if any static variables exist and replace them
+	for placeholder, value := range replacements {
+		if strings.Contains(modifiedContent, placeholder) {
+			modifiedContent = strings.ReplaceAll(modifiedContent, placeholder, value)
+			hasStaticVariables = true
+			log.WithFields(log.Fields{
+				"placeholder": placeholder,
+				"value":       value,
+			}).Debug("Replaced static variable")
+		}
+	}
+
+	// If no static variables were found, return false to indicate Go template processing should be used
+	if !hasStaticVariables {
+		return false
+	}
+
+	// Create destination directory if it doesn't exist
+	if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+		log.WithError(err).WithField("path", filepath.Dir(destPath)).Error("Failed to create destination directory")
+		return false
+	}
+
+	// Write the modified content to destination
+	if err := os.WriteFile(destPath, []byte(modifiedContent), 0644); err != nil {
+		log.WithError(err).WithField("file", destPath).Error("Failed to write file with static replacements")
+		return false
+	}
+
+	return true
 }
 
 func (d *githubDeployer) createFreezeFile(baseFolder, freezeFilePath string) (string, error) {
