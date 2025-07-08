@@ -74,6 +74,85 @@ deploy:
 
 You can see a full example for the deployments repository [here](https://github.com/apono-io/argo-bot/tree/master/examples/deployments-repo)
 
+## Template Processing
+
+Argo Bot automatically detects the type of templates based on the presence of `Chart.yaml` file:
+
+### 1. Simple YAML Templates
+If no `Chart.yaml` is found, Argo Bot uses Go templates with three predefined variables:
+- `{{ .ServiceName }}` - The name of the service being deployed
+- `{{ .Environment }}` - The target environment (e.g., staging, production)
+- `{{ .Version }}` - The commit hash or version being deployed
+
+Example simple YAML template (`deployment.yaml`):
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .ServiceName }}
+  namespace: {{ .Environment }}
+spec:
+  template:
+    spec:
+      containers:
+      - name: {{ .ServiceName }}
+        image: myregistry.com/{{ .ServiceName }}:{{ .Version }}
+```
+
+### 2. Helm Charts (Auto-detected)
+If `Chart.yaml` is present in the template directory, Argo Bot automatically treats it as a Helm chart. It copies the entire chart directory and creates an additional `argo-bot-values.yaml` file with deployment information.
+
+The generated `argo-bot-values.yaml` contains:
+```yaml
+argoBot:
+  serviceName: "my-service"
+  environment: "production"
+  version: "abc123def"
+```
+
+You can reference these values in your Helm templates:
+```yaml
+# values.yaml or template files
+image:
+  repository: myregistry.com/{{ .Values.argoBot.serviceName }}
+  tag: {{ .Values.argoBot.version }}
+  
+namespace: {{ .Values.argoBot.environment }}
+```
+
+When deploying with ArgoCD, configure it to use both values files:
+```yaml
+# ArgoCD Application spec
+source:
+  helm:
+    valueFiles:
+      - values.yaml
+      - argo-bot-values.yaml
+```
+
+### Gradual Migration Example
+This auto-detection enables gradual migration from simple YAML to Helm:
+
+```yaml
+deploy:
+  services:
+    - name: my-service
+      githubOrganization: my-org
+      githubRepository: my-repo
+      environments:
+        - name: dev
+          templatePath: "helm/my-service"  # Has Chart.yaml - auto-detected as Helm
+          generatedPath: "auto-generated/dev/my-service"
+        - name: staging
+          templatePath: "templates/staging"  # No Chart.yaml - uses Go templates
+          generatedPath: "auto-generated/staging/my-service"
+        - name: production
+          templatePath: "templates/production"  # No Chart.yaml - uses Go templates
+          generatedPath: "auto-generated/production/my-service"
+```
+
+As you migrate each environment, simply add `Chart.yaml` to the template directory and Argo Bot will automatically switch to Helm processing for that environment.
+
 ### Running
 ```shell
 # Create secret with GitHub App private key

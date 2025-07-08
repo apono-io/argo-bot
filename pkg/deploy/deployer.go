@@ -3,6 +3,7 @@ package deploy
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -157,7 +158,7 @@ func (d *githubDeployer) Deploy(serviceNames []string, environmentName, commit, 
 	prTitle := fmt.Sprintf("Deploy %s to %s with version %s triggered by %s (%s)", servicesString, environmentName, commit[:7], userFullname, userEmail)
 
 	for service, environment := range serviceToEnvironment {
-		files, err := d.renderTemplates(baseFolder, environment.TemplatePath, environment.GeneratedPath, service.Name, environmentName, commit)
+		files, err := d.renderTemplates(baseFolder, environment.TemplatePath, environment.GeneratedPath, service.Name, environmentName, commit, logWithCtx)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to render templates for service %s, error: %w", service.Name, err)
 		}
@@ -325,7 +326,14 @@ func (d *githubDeployer) checkIfServiceFrozen(baseFolder, freezeFilePath string)
 	return true, nil
 }
 
-func (d *githubDeployer) renderTemplates(baseFolder, templatePath, generatedPath, serviceName, environment, commit string) ([]string, error) {
+func (d *githubDeployer) renderTemplates(baseFolder, templatePath, generatedPath, serviceName, environment, commit string, log *log.Entry) ([]string, error) {
+	// Get existing files before cleaning
+	existingFiles := d.findExistingFiles(baseFolder, generatedPath)
+	log.Infof("Found %d existing files in %s", len(existingFiles), generatedPath)
+	for _, f := range existingFiles {
+		log.Debugf("Existing file: %s", f)
+	}
+
 	generatedFolder := filepath.Join(baseFolder, generatedPath)
 	err := d.cleanFolder(generatedFolder)
 	if err != nil {
@@ -333,6 +341,64 @@ func (d *githubDeployer) renderTemplates(baseFolder, templatePath, generatedPath
 	}
 
 	templateFolder := filepath.Join(baseFolder, templatePath)
+
+	var newFiles []string
+	if d.isHelmChart(templateFolder) {
+		log.Infof("Processing Helm chart templates for service %s", serviceName)
+		newFiles, err = d.processHelmChart(baseFolder, templateFolder, generatedFolder, serviceName, environment, commit)
+	} else {
+		log.Infof("Processing Go templates for service %s", serviceName)
+		newFiles, err = d.processGoTemplates(baseFolder, templateFolder, generatedFolder, serviceName, environment, commit)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Add deletion markers for files that no longer exist
+	return d.addDeletionMarkers(existingFiles, newFiles), nil
+}
+
+func (d *githubDeployer) addDeletionMarkers(existingFiles, newFiles []string) []string {
+	newFileSet := make(map[string]bool)
+	for _, file := range newFiles {
+		newFileSet[file] = true
+	}
+
+	allFiles := make([]string, len(newFiles))
+	copy(allFiles, newFiles)
+
+	for _, existingFile := range existingFiles {
+		if !newFileSet[existingFile] {
+			allFiles = append(allFiles, existingFile)
+		}
+	}
+
+	return allFiles
+}
+
+func (d *githubDeployer) isHelmChart(templateFolder string) bool {
+	chartPath := filepath.Join(templateFolder, "Chart.yaml")
+	_, err := os.Stat(chartPath)
+	return err == nil
+}
+
+func (d *githubDeployer) processHelmChart(baseFolder, templateFolder, generatedFolder, serviceName, environment, commit string) ([]string, error) {
+	copiedFiles, err := d.copyDirectory(baseFolder, templateFolder, generatedFolder)
+	if err != nil {
+		return nil, err
+	}
+
+	valuesFile, err := d.createArgoBotValuesFile(baseFolder, generatedFolder, serviceName, environment, commit)
+	if err != nil {
+		return nil, err
+	}
+
+	copiedFiles = append(copiedFiles, valuesFile)
+	return copiedFiles, nil
+}
+
+func (d *githubDeployer) processGoTemplates(baseFolder, templateFolder, generatedFolder, serviceName, environment, commit string) ([]string, error) {
 	templateFiles, err := os.ReadDir(templateFolder)
 	if err != nil {
 		return nil, err
@@ -369,6 +435,103 @@ func (d *githubDeployer) renderTemplates(baseFolder, templatePath, generatedPath
 	}
 
 	return renderedFiles, nil
+}
+
+func (d *githubDeployer) copyDirectory(baseFolder, sourceFolder, destFolder string) ([]string, error) {
+	var copiedFiles []string
+
+	err := filepath.Walk(sourceFolder, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		relPath, err := filepath.Rel(sourceFolder, path)
+		if err != nil {
+			return err
+		}
+
+		destPath := filepath.Join(destFolder, relPath)
+
+		if info.IsDir() {
+			return os.MkdirAll(destPath, info.Mode())
+		}
+
+		if err := d.copyFile(path, destPath); err != nil {
+			return err
+		}
+
+		fileRelPath, err := filepath.Rel(baseFolder, destPath)
+		if err != nil {
+			return err
+		}
+		copiedFiles = append(copiedFiles, fileRelPath)
+
+		return nil
+	})
+
+	return copiedFiles, err
+}
+
+func (d *githubDeployer) copyFile(src, dest string) error {
+	srcFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer srcFile.Close()
+
+	destFile, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	defer destFile.Close()
+
+	_, err = io.Copy(destFile, srcFile)
+	return err
+}
+
+func (d *githubDeployer) createArgoBotValuesFile(baseFolder, generatedFolder, serviceName, environment, commit string) (string, error) {
+	valuesPath := filepath.Join(generatedFolder, "argo-bot-values.yaml")
+	valuesContent := d.buildArgoBotValues(serviceName, environment, commit)
+
+	err := os.WriteFile(valuesPath, []byte(valuesContent), 0644)
+	if err != nil {
+		return "", err
+	}
+
+	return filepath.Rel(baseFolder, valuesPath)
+}
+
+func (d *githubDeployer) buildArgoBotValues(serviceName, environment, commit string) string {
+	return fmt.Sprintf(`argoBot:
+  serviceName: "%s"
+  environment: "%s"
+  version: "%s"
+`, serviceName, environment, commit)
+}
+
+func (d *githubDeployer) findExistingFiles(baseFolder, generatedPath string) []string {
+	var files []string
+	fullPath := filepath.Join(baseFolder, generatedPath)
+
+	err := filepath.Walk(fullPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+
+		relPath, err := filepath.Rel(baseFolder, path)
+		if err != nil {
+			return nil
+		}
+
+		files = append(files, relPath)
+		return nil
+	})
+
+	if err != nil {
+		return []string{}
+	}
+
+	return files
 }
 
 func (d *githubDeployer) createFreezeFile(baseFolder, freezeFilePath string) (string, error) {
