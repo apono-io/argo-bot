@@ -67,6 +67,7 @@ deploy:
           generatedPath: "<generated-files-folder-path>"
           allowedBranches: # Restriction for deployment branches (Example: only master deployment allowed on prod)
             - "master"
+          helmValuesTargetFile: "<custom-values-filename>" # Optional: custom values file name for Helm charts (default: argo-bot-values.yaml)
         - name: <environment-name>
           templatePath: "<templates-folder-path>"
           generatedPath: "<generated-files-folder-path>"
@@ -100,15 +101,33 @@ spec:
 ```
 
 ### 2. Helm Charts (Auto-detected)
-If `Chart.yaml` is present in the template directory, Argo Bot automatically treats it as a Helm chart. It copies the entire chart directory and creates an additional `argo-bot-values.yaml` file with deployment information.
+If `Chart.yaml` is present in the template directory, Argo Bot automatically treats it as a Helm chart. It copies the entire chart directory and creates an additional values file with deployment information.
 
-The generated `argo-bot-values.yaml` contains:
+By default, the values file is named `argo-bot-values.yaml`, but you can customize this using the `helmValuesTargetFile` configuration option:
+
+```yaml
+environments:
+  - name: production
+    templatePath: "helm/my-service"
+    generatedPath: "auto-generated/prod/my-service"
+    helmValuesTargetFile: "prod-values.yaml"  # Custom values file name
+```
+
+The generated values file contains:
 ```yaml
 argoBot:
   serviceName: "my-service"
   environment: "production"
   version: "abc123def"
 ```
+
+**Important:** If the target values file already exists in the source folder, Argo Bot will:
+1. Parse the existing YAML content
+2. Check if an `argoBot` section already exists - if it does, the deployment will fail with an error
+3. If no `argoBot` section exists, append it at the bottom of the file
+4. Preserve all other existing values and formatting
+
+The values file must not contain an `argoBot` section as it is auto-generated and managed by argo-bot.
 
 You can reference these values in your Helm templates:
 ```yaml
@@ -120,14 +139,21 @@ image:
 namespace: {{ .Values.argoBot.environment }}
 ```
 
-When deploying with ArgoCD, configure it to use both values files:
+When deploying with ArgoCD, configure it to use the appropriate values files:
 ```yaml
-# ArgoCD Application spec
+# ArgoCD Application spec (default configuration)
 source:
   helm:
     valueFiles:
       - values.yaml
       - argo-bot-values.yaml
+
+# Or with custom values file name
+source:
+  helm:
+    valueFiles:
+      - values.yaml
+      - prod-values.yaml  # If helmValuesTargetFile: "prod-values.yaml"
 ```
 
 ### Gradual Migration Example
