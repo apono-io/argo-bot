@@ -14,6 +14,7 @@ import (
 	"github.com/apono-io/argo-bot/pkg/github"
 	gh "github.com/google/go-github/v45/github"
 	log "github.com/sirupsen/logrus"
+	"gopkg.in/yaml.v3"
 )
 
 type FreezeAction string
@@ -26,6 +27,7 @@ const (
 )
 
 const freezeFileName = ".freeze"
+const defaultHelmValuesFileName = "argo-bot-values.yaml"
 
 type EnvironmentStatus struct {
 	EnvironmentName string
@@ -158,7 +160,7 @@ func (d *githubDeployer) Deploy(serviceNames []string, environmentName, commit, 
 	prTitle := fmt.Sprintf("Deploy %s to %s with version %s triggered by %s (%s)", servicesString, environmentName, commit[:7], userFullname, userEmail)
 
 	for service, environment := range serviceToEnvironment {
-		files, err := d.renderTemplates(baseFolder, environment.TemplatePath, environment.GeneratedPath, service.Name, environmentName, commit, logWithCtx)
+		files, err := d.renderTemplates(baseFolder, environment.TemplatePath, environment.GeneratedPath, service.Name, environmentName, commit, environment, logWithCtx)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to render templates for service %s, error: %w", service.Name, err)
 		}
@@ -326,7 +328,7 @@ func (d *githubDeployer) checkIfServiceFrozen(baseFolder, freezeFilePath string)
 	return true, nil
 }
 
-func (d *githubDeployer) renderTemplates(baseFolder, templatePath, generatedPath, serviceName, environment, commit string, log *log.Entry) ([]string, error) {
+func (d *githubDeployer) renderTemplates(baseFolder, templatePath, generatedPath, serviceName, environment, commit string, env *ServiceEnvironment, log *log.Entry) ([]string, error) {
 	// Get existing files before cleaning
 	existingFiles := d.findExistingFiles(baseFolder, generatedPath)
 	log.Infof("Found %d existing files in %s", len(existingFiles), generatedPath)
@@ -345,7 +347,7 @@ func (d *githubDeployer) renderTemplates(baseFolder, templatePath, generatedPath
 	var newFiles []string
 	if d.isHelmChart(templateFolder) {
 		log.Infof("Processing Helm chart templates for service %s", serviceName)
-		newFiles, err = d.processHelmChart(baseFolder, templateFolder, generatedFolder, serviceName, environment, commit)
+		newFiles, err = d.processHelmChart(baseFolder, templateFolder, generatedFolder, serviceName, environment, commit, env)
 	} else {
 		log.Infof("Processing Go templates for service %s", serviceName)
 		newFiles, err = d.processGoTemplates(baseFolder, templateFolder, generatedFolder, serviceName, environment, commit)
@@ -383,13 +385,13 @@ func (d *githubDeployer) isHelmChart(templateFolder string) bool {
 	return err == nil
 }
 
-func (d *githubDeployer) processHelmChart(baseFolder, templateFolder, generatedFolder, serviceName, environment, commit string) ([]string, error) {
+func (d *githubDeployer) processHelmChart(baseFolder, templateFolder, generatedFolder, serviceName, environment, commit string, env *ServiceEnvironment) ([]string, error) {
 	copiedFiles, err := d.copyDirectory(baseFolder, templateFolder, generatedFolder)
 	if err != nil {
 		return nil, err
 	}
 
-	valuesFile, err := d.createArgoBotValuesFile(baseFolder, generatedFolder, serviceName, environment, commit)
+	valuesFile, err := d.createArgoBotValuesFile(baseFolder, generatedFolder, serviceName, environment, commit, env)
 	if err != nil {
 		return nil, err
 	}
@@ -489,24 +491,58 @@ func (d *githubDeployer) copyFile(src, dest string) error {
 	return err
 }
 
-func (d *githubDeployer) createArgoBotValuesFile(baseFolder, generatedFolder, serviceName, environment, commit string) (string, error) {
-	valuesPath := filepath.Join(generatedFolder, "argo-bot-values.yaml")
-	valuesContent := d.buildArgoBotValues(serviceName, environment, commit)
+func (d *githubDeployer) createArgoBotValuesFile(baseFolder, generatedFolder, serviceName, environment, commit string, env *ServiceEnvironment) (string, error) {
+	targetFileName := defaultHelmValuesFileName
+	if env.HelmValuesTargetFile != "" {
+		targetFileName = env.HelmValuesTargetFile
+	}
 
-	err := os.WriteFile(valuesPath, []byte(valuesContent), 0644)
+	valuesPath := filepath.Join(generatedFolder, targetFileName)
+
+	argoBotValues := map[string]interface{}{
+		"argoBot": map[string]interface{}{
+			"serviceName": serviceName,
+			"environment": environment,
+			"version":     commit,
+		},
+	}
+
+	argoBotYAML, err := yaml.Marshal(argoBotValues)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal argoBot values: %w", err)
+	}
+	argoBotSection := strings.TrimRight(string(argoBotYAML), "\n")
+
+	existingContent, err := os.ReadFile(valuesPath)
+	if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("failed to read existing values file: %w", err)
+	}
+
+	var finalContent string
+
+	if len(existingContent) > 0 {
+		var values map[string]interface{}
+		err = yaml.Unmarshal(existingContent, &values)
+		if err != nil {
+			return "", fmt.Errorf("failed to parse existing values file: %w", err)
+		}
+
+		if _, hasArgoBot := values["argoBot"]; hasArgoBot {
+			return "", fmt.Errorf("values file must not contain argoBot section as it is auto-generated by argo-bot")
+		}
+
+		contentStr := string(existingContent)
+		finalContent = strings.TrimRight(contentStr, "\n") + "\n\n" + argoBotSection + "\n"
+	} else {
+		finalContent = argoBotSection + "\n"
+	}
+
+	err = os.WriteFile(valuesPath, []byte(finalContent), 0644)
 	if err != nil {
 		return "", err
 	}
 
 	return filepath.Rel(baseFolder, valuesPath)
-}
-
-func (d *githubDeployer) buildArgoBotValues(serviceName, environment, commit string) string {
-	return fmt.Sprintf(`argoBot:
-  serviceName: "%s"
-  environment: "%s"
-  version: "%s"
-`, serviceName, environment, commit)
 }
 
 func (d *githubDeployer) findExistingFiles(baseFolder, generatedPath string) []string {

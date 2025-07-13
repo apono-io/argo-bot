@@ -22,4 +22,5 @@ type ServiceEnvironment struct {
 	AllowedBranches      []string
 	DeploymentRepoBranch string `default:""`
 	FreezeFilePath       string `default:""`
+	HelmValuesTargetFile string `default:""`
 }
