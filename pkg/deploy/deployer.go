@@ -115,7 +115,7 @@ func (d *githubDeployer) Deploy(serviceNames []string, environmentName, commit, 
 	servicesString := strings.Join(serviceNames, ",")
 	branch := fmt.Sprintf("deploy-%s-%s", servicesString, environmentName)
 
-	baseFolder, ref, err := d.cloneBranch(ctx, branch, deploymentBranch)
+	baseFolder, _, err := d.cloneBranch(ctx, branch, deploymentBranch)
 	if err != nil {
 		return nil, "", err
 	}
@@ -163,13 +163,19 @@ func (d *githubDeployer) Deploy(serviceNames []string, environmentName, commit, 
 			return nil, "", fmt.Errorf("failed to render templates for service %s, error: %w", service.Name, err)
 		}
 
-		tree, err := d.githubClient.CreateTree(ctx, ref, baseFolder, files)
+		// Get latest ref before each commit to avoid race conditions
+		latestRef, err := d.githubClient.GetRef(ctx, "", branch)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to get latest ref for service %s, error: %w", service.Name, err)
+		}
+
+		tree, err := d.githubClient.CreateTree(ctx, latestRef, baseFolder, files)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to create diff tree for service %s, error: %w", service.Name, err)
 		}
 
 		commitMsg := fmt.Sprintf("Deploy %s to %s with version %s triggered by %s (%s)", service.Name, environmentName, commit[:7], userFullname, userEmail)
-		if err = d.githubClient.PushCommit(ctx, ref, tree, userFullname, userEmail, commitMsg); err != nil {
+		if err = d.githubClient.PushCommit(ctx, latestRef, tree, userFullname, userEmail, commitMsg); err != nil {
 			return nil, "", fmt.Errorf("failed to create commit for service %s, error: %w", service.Name, err)
 		}
 	}
@@ -205,7 +211,7 @@ func (d *githubDeployer) Freeze(serviceNames []string, environment, userFullname
 	branch := fmt.Sprintf("%s-%s-%s", action, servicesString, environment)
 	prTitle := fmt.Sprintf("%s %s to %s triggered by %s (%s)", action, servicesString, environment, userFullname, userEmail)
 
-	baseFolder, ref, err := d.cloneBranch(ctx, branch, deploymentBranch)
+	baseFolder, _, err := d.cloneBranch(ctx, branch, deploymentBranch)
 	if err != nil {
 		return nil, "", err
 	}
@@ -242,12 +248,18 @@ func (d *githubDeployer) Freeze(serviceNames []string, environment, userFullname
 			}
 		}
 
-		tree, err := d.githubClient.CreateTree(ctx, ref, baseFolder, []string{freezeFile})
+		// Get latest ref before each commit to avoid race conditions
+		latestRef, err := d.githubClient.GetRef(ctx, "", branch)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to get latest ref for service %s, error: %w", service.Name, err)
+		}
+
+		tree, err := d.githubClient.CreateTree(ctx, latestRef, baseFolder, []string{freezeFile})
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to create diff tree for service %s, error: %w", service.Name, err)
 		}
 
-		if err = d.githubClient.PushCommit(ctx, ref, tree, userFullname, userEmail, commitMsg); err != nil {
+		if err = d.githubClient.PushCommit(ctx, latestRef, tree, userFullname, userEmail, commitMsg); err != nil {
 			return nil, "", fmt.Errorf("failed to create commit for service %s, error: %w", service.Name, err)
 		}
 		changesDetected = true
