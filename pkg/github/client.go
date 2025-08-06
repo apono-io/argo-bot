@@ -180,32 +180,53 @@ func (c *apiClient) CreateTree(ctx context.Context, ref *github.Reference, baseF
 }
 
 func (c *apiClient) PushCommit(ctx context.Context, ref *github.Reference, tree *github.Tree, userFullname string, userEmail string, commitMessage string) (err error) {
-	// Get the parent commit to attach the commit to.
-	parent, _, err := c.client.Repositories.GetCommit(ctx, c.organization, c.repository, *ref.Object.SHA, nil)
-	if err != nil {
+	maxRetries := 3
+	baseDelay := 100 * time.Millisecond
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		parent, _, err := c.client.Repositories.GetCommit(ctx, c.organization, c.repository, *ref.Object.SHA, nil)
+		if err != nil {
+			return err
+		}
+		parent.Commit.SHA = parent.SHA
+
+		now := time.Now()
+		commit := &github.Commit{
+			Author:    &github.CommitAuthor{Date: &now, Name: &userFullname, Email: &userEmail},
+			Committer: &github.CommitAuthor{Date: &now, Name: &c.authorName, Email: &c.authorEmail},
+			Message:   &commitMessage,
+			Tree:      tree,
+			Parents:   []*github.Commit{parent.Commit},
+		}
+		newCommit, _, err := c.client.Git.CreateCommit(ctx, c.organization, c.repository, commit)
+		if err != nil {
+			return err
+		}
+
+		ref.Object.SHA = newCommit.SHA
+		_, _, err = c.client.Git.UpdateRef(ctx, c.organization, c.repository, ref, false)
+		if err == nil {
+			return nil
+		}
+
+		if strings.Contains(err.Error(), "422") || strings.Contains(err.Error(), "Reference cannot be updated") {
+			if attempt < maxRetries-1 {
+				delay := baseDelay * time.Duration(attempt+1)
+				log.WithError(err).WithField("retry", attempt+1).Warn("UpdateRef failed, retrying")
+				time.Sleep(delay)
+
+				latestRef, _, refErr := c.client.Git.GetRef(ctx, c.organization, c.repository, ref.GetRef())
+				if refErr == nil {
+					ref.Object.SHA = latestRef.Object.SHA
+				}
+			}
+			continue
+		}
+
 		return err
 	}
-	// This is not always populated, but is needed.
-	parent.Commit.SHA = parent.SHA
 
-	// Create the commit using the tree.
-	now := time.Now()
-	commit := &github.Commit{
-		Author:    &github.CommitAuthor{Date: &now, Name: &userFullname, Email: &userEmail},
-		Committer: &github.CommitAuthor{Date: &now, Name: &c.authorName, Email: &c.authorEmail},
-		Message:   &commitMessage,
-		Tree:      tree,
-		Parents:   []*github.Commit{parent.Commit},
-	}
-	newCommit, _, err := c.client.Git.CreateCommit(ctx, c.organization, c.repository, commit)
-	if err != nil {
-		return err
-	}
-
-	// Attach the commit to the master branch.
-	ref.Object.SHA = newCommit.SHA
-	_, _, err = c.client.Git.UpdateRef(ctx, c.organization, c.repository, ref, false)
-	return err
+	return fmt.Errorf("failed to push commit after %d retries: %w", maxRetries, err)
 }
 
 func (c *apiClient) CreatePR(ctx context.Context, title, description, baseBranch, branch string) (*PullRequest, string, error) {
