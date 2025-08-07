@@ -159,21 +159,40 @@ func (d *githubDeployer) Deploy(serviceNames []string, environmentName, commit, 
 	logWithCtx.Infof("Starting deployment")
 	prTitle := fmt.Sprintf("Deploy %s to %s with version %s triggered by %s (%s)", servicesString, environmentName, commit[:7], userFullname, userEmail)
 
+	// Process all services to collect their files
+	allServiceFiles := make(map[string][]string) // service -> files
 	for service, environment := range serviceToEnvironment {
 		files, err := d.renderTemplates(baseFolder, environment.TemplatePath, environment.GeneratedPath, service.Name, environmentName, commit, environment, logWithCtx)
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to render templates for service %s, error: %w", service.Name, err)
 		}
+		allServiceFiles[service.Name] = files
+	}
 
-		tree, err := d.githubClient.CreateTree(ctx, ref, baseFolder, files)
-		if err != nil {
-			return nil, "", fmt.Errorf("failed to create diff tree for service %s, error: %w", service.Name, err)
+	// Check for file conflicts between services
+	fileOwners := make(map[string]string)
+	for serviceName, files := range allServiceFiles {
+		for _, file := range files {
+			if existingOwner, exists := fileOwners[file]; exists {
+				return nil, "", fmt.Errorf("file conflict: both service '%s' and service '%s' are trying to modify file '%s'", existingOwner, serviceName, file)
+			}
+			fileOwners[file] = serviceName
 		}
+	}
 
-		commitMsg := fmt.Sprintf("Deploy %s to %s with version %s triggered by %s (%s)", service.Name, environmentName, commit[:7], userFullname, userEmail)
-		if err = d.githubClient.PushCommit(ctx, ref, tree, userFullname, userEmail, commitMsg); err != nil {
-			return nil, "", fmt.Errorf("failed to create commit for service %s, error: %w", service.Name, err)
-		}
+	var uniqueFiles []string
+	for file := range fileOwners {
+		uniqueFiles = append(uniqueFiles, file)
+	}
+
+	tree, err := d.githubClient.CreateTree(ctx, ref, baseFolder, uniqueFiles)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create diff tree for services, error: %w", err)
+	}
+
+	commitMsg := fmt.Sprintf("Deploy %s to %s with version %s triggered by %s (%s)", servicesString, environmentName, commit[:7], userFullname, userEmail)
+	if err = d.githubClient.PushCommit(ctx, ref, tree, userFullname, userEmail, commitMsg); err != nil {
+		return nil, "", fmt.Errorf("failed to create commit for services, error: %w", err)
 	}
 
 	prDescription := fmt.Sprintf("Service Names: %s\nEnvironment: %s\nCommit: [%s](%s)\nRequested by: %s (%s)",
@@ -219,9 +238,9 @@ func (d *githubDeployer) Freeze(serviceNames []string, environment, userFullname
 	}()
 
 	changesDetected := false
+	freezeFiles := make(map[string]struct{})
 
 	for service, environment := range serviceToEnvironment {
-		commitMsg := fmt.Sprintf("%s %s to %s triggered by %s (%s)", action, service.Name, environment, userFullname, userEmail)
 		freezeFilePath := getFreezeFilePath(*environment)
 
 		var freezeFile string
@@ -244,15 +263,25 @@ func (d *githubDeployer) Freeze(serviceNames []string, environment, userFullname
 			}
 		}
 
-		tree, err := d.githubClient.CreateTree(ctx, ref, baseFolder, []string{freezeFile})
-		if err != nil {
-			return nil, "", fmt.Errorf("failed to create diff tree for service %s, error: %w", service.Name, err)
+		freezeFiles[freezeFile] = struct{}{}
+		changesDetected = true
+	}
+
+	if changesDetected {
+		var allFreezeFiles []string
+		for file := range freezeFiles {
+			allFreezeFiles = append(allFreezeFiles, file)
 		}
 
-		if err = d.githubClient.PushCommit(ctx, ref, tree, userFullname, userEmail, commitMsg); err != nil {
-			return nil, "", fmt.Errorf("failed to create commit for service %s, error: %w", service.Name, err)
+		tree, err := d.githubClient.CreateTree(ctx, ref, baseFolder, allFreezeFiles)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to create diff tree for %s operation, error: %w", action, err)
 		}
-		changesDetected = true
+
+		commitMsg := fmt.Sprintf("%s %s on %s triggered by %s (%s)", action, servicesString, environment, userFullname, userEmail)
+		if err = d.githubClient.PushCommit(ctx, ref, tree, userFullname, userEmail, commitMsg); err != nil {
+			return nil, "", fmt.Errorf("failed to create commit for %s operation, error: %w", action, err)
+		}
 	}
 
 	if !changesDetected {
