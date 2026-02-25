@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+
 	"github.com/apono-io/argo-bot/pkg/config"
 	"github.com/apono-io/argo-bot/pkg/slack"
 	"github.com/form3tech-oss/logrus-logzio-hook/pkg/hook"
@@ -19,7 +20,6 @@ func Run(config config.Config) error {
 	log.SetFormatter(textFormatter)
 	log.SetReportCaller(true)
 
-	// Set log level from config
 	logLevel, err := log.ParseLevel(loggingCfg.LogLevel)
 	if err != nil {
 		log.Warnf("Invalid log level '%s', defaulting to info", loggingCfg.LogLevel)
@@ -27,7 +27,6 @@ func Run(config config.Config) error {
 	}
 	log.SetLevel(logLevel)
 
-	// Enable Slack debug mode when log level is debug or trace
 	if logLevel == log.DebugLevel || logLevel == log.TraceLevel {
 		config.Slack.Debug = true
 	}
