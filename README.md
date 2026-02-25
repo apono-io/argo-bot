@@ -202,6 +202,23 @@ helm install argo-bot ./helm/charts/argo-bot \
   --wait
 ```
 
+## Debug Mode
+
+Enable debug logging to troubleshoot issues:
+
+```shell
+# Local development
+export LOGGING_LOGLEVEL=debug
+./argo-bot
+
+# Kubernetes
+kubectl set env deployment/argo-bot LOGGING_LOGLEVEL=debug
+```
+
+Available log levels: `error`, `warn`, `info` (default), `debug`, `trace`
+
+**Note:** `debug` and `trace` levels automatically enable Slack event logging.
+
 ## Usage Examples
 
 ### Deploy Command
