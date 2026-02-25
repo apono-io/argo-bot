@@ -343,6 +343,7 @@ func (c *apiClient) extractTarGz(targetPath string, gzipStream io.Reader) error 
 		return fmt.Errorf("failed to create gzip reader, error: %w", err)
 	}
 
+	var symlinks []string
 	tarReader := tar.NewReader(uncompressedStream)
 	for true {
 		header, err := tarReader.Next()
@@ -365,10 +366,24 @@ func (c *apiClient) extractTarGz(targetPath string, gzipStream io.Reader) error 
 			if err != nil {
 				return err
 			}
+		case tar.TypeSymlink:
+			// First create the symlink, then track it for dereferencing
+			linkPath := path.Join(targetPath, name)
+			if err := os.Symlink(header.Linkname, linkPath); err != nil {
+				return fmt.Errorf("failed to create symlink %s -> %s, error: %w", name, header.Linkname, err)
+			}
+			symlinks = append(symlinks, linkPath)
 		case tar.TypeXGlobalHeader:
 			continue
 		default:
 			return fmt.Errorf("unkown header type: %b, name: %s", header.Typeflag, name)
+		}
+	}
+
+	// Dereference all symlinks by copying the actual file content
+	for _, symlinkPath := range symlinks {
+		if err := c.dereferenceSymlink(symlinkPath); err != nil {
+			return fmt.Errorf("failed to dereference symlink %s, error: %w", symlinkPath, err)
 		}
 	}
 
@@ -396,6 +411,31 @@ func (c *apiClient) createFile(targetPath string, header *tar.Header, tarReader 
 
 	if _, err := io.Copy(outFile, tarReader); err != nil {
 		return fmt.Errorf("failed to copy file content, file: %s, error: %w", header.Name, err)
+	}
+
+	return nil
+}
+
+func (c *apiClient) dereferenceSymlink(symlinkPath string) error {
+	targetPath, err := os.Readlink(symlinkPath)
+	if err != nil {
+		return fmt.Errorf("failed to read symlink: %w", err)
+	}
+
+	if !filepath.IsAbs(targetPath) {
+		targetPath = filepath.Join(filepath.Dir(symlinkPath), targetPath)
+	}
+	content, err := os.ReadFile(targetPath)
+	if err != nil {
+		return fmt.Errorf("failed to read target file %s: %w", targetPath, err)
+	}
+
+	if err := os.Remove(symlinkPath); err != nil {
+		return fmt.Errorf("failed to remove symlink: %w", err)
+	}
+
+	if err := os.WriteFile(symlinkPath, content, 0644); err != nil {
+		return fmt.Errorf("failed to write dereferenced file: %w", err)
 	}
 
 	return nil

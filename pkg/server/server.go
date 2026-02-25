@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+
 	"github.com/apono-io/argo-bot/pkg/config"
 	"github.com/apono-io/argo-bot/pkg/slack"
 	"github.com/form3tech-oss/logrus-logzio-hook/pkg/hook"
@@ -18,6 +19,17 @@ func Run(config config.Config) error {
 
 	log.SetFormatter(textFormatter)
 	log.SetReportCaller(true)
+
+	logLevel, err := log.ParseLevel(loggingCfg.LogLevel)
+	if err != nil {
+		log.Warnf("Invalid log level '%s', defaulting to info", loggingCfg.LogLevel)
+		logLevel = log.InfoLevel
+	}
+	log.SetLevel(logLevel)
+
+	if logLevel == log.DebugLevel || logLevel == log.TraceLevel {
+		config.Slack.Debug = true
+	}
 
 	if loggingCfg.LogzioListenerAddress != "" && loggingCfg.LogzioLoggingToken != "" {
 		sender, err := logzio.New(fmt.Sprintf("%s&type=%s", loggingCfg.LogzioLoggingToken, "argo-bot"),

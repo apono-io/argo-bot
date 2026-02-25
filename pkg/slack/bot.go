@@ -20,8 +20,9 @@ type Bot interface {
 }
 
 func New(config Config, deployConfig deploy.Config) (Bot, error) {
+	log.Infof("Creating Slack bot with debug mode: %v", config.Debug)
 	slackerBot := slacker.NewClient(config.BotToken, config.AppToken,
-		slacker.WithDebug(false),
+		slacker.WithDebug(config.Debug),
 	)
 
 	return &bot{
