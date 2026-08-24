@@ -47,11 +47,13 @@ func (c *controller) handleDeploy(botCtx slacker.BotContext, req slacker.Request
 		WithField("userCommit", userCommit)
 
 	services := utils.UniqueStrings(strings.Split(serviceName, ","))
+	environments := utils.UniqueStrings(strings.Split(environment, ","))
 	resolvedServices := c.deployer.ResolveTags(services)
+	resolvedEnvironments := c.deployer.ResolveEnvironmentTags(services, environments)
 
 	deploymentReq := deploymentRequest{
 		ServiceNames: resolvedServices,
-		Environment:  environment,
+		Environment:  strings.Join(resolvedEnvironments, ", "),
 		UserId:       botCtx.Event().UserID,
 		Commit:       userCommit,
 	}
@@ -81,7 +83,7 @@ func (c *controller) handleDeploy(botCtx slacker.BotContext, req slacker.Request
 	}
 
 	userFullname := fmt.Sprintf("%s %s", profile.FirstName, profile.LastName)
-	pr, diff, err := c.deployer.Deploy(services, environment, commit, commitUrl, userFullname, profile.Email)
+	pr, diff, err := c.deployer.Deploy(services, environments, commit, commitUrl, userFullname, profile.Email)
 	if err != nil {
 		ctxLogger.WithError(err).Error("Failed to deploy")
 		c.sendErrorMessage(botCtx, ctxLogger, deploymentReq, err)

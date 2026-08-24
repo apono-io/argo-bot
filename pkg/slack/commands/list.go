@@ -54,6 +54,9 @@ func (c *controller) handleList(botCtx slacker.BotContext, request slacker.Reque
 		var envStatusStrings []string
 		for _, envStatus := range envStatuses {
 			status := fmt.Sprintf("*%s*: %s", envStatus.EnvironmentName, formatFreezeStatus(envStatus.IsFrozen))
+			if envTags := environmentTags(serviceConfig, envStatus.EnvironmentName); len(envTags) > 0 {
+				status = fmt.Sprintf("%s  `%s`", status, strings.Join(envTags, "`, `"))
+			}
 			envStatusStrings = append(envStatusStrings, status)
 		}
 
@@ -145,6 +148,16 @@ func (c *controller) sendListErrorMessage(botCtx slacker.BotContext, ctxLogger *
 	if err != nil {
 		ctxLogger.WithError(err).Error("Failed to send error message to user")
 	}
+}
+
+func environmentTags(service deploy.Service, environmentName string) []string {
+	for _, environment := range service.Environments {
+		if environment.Name == environmentName {
+			return environment.Tags
+		}
+	}
+
+	return nil
 }
 
 func formatFreezeStatus(frozen bool) string {
