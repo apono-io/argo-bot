@@ -43,6 +43,7 @@ oauth_config:
       - mpim:read
       - users.profile:read
       - users:read
+      - users:read.email
       - users:write
       - chat:write.public
 settings:

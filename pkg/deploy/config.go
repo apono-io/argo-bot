@@ -1,10 +1,16 @@
 package deploy
 
-import "github.com/apono-io/argo-bot/pkg/github"
+import (
+	"time"
+
+	"github.com/apono-io/argo-bot/pkg/github"
+)
 
 type Config struct {
 	Github   github.Config
 	Services []Service
+	// Deploying to a non-prod environment warns when someone else deployed the same service there within this window. 0 disables it.
+	RecentDeploymentWindow time.Duration `default:"2h"`
 }
 
 type Service struct {

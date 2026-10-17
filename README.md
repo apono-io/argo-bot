@@ -54,6 +54,7 @@ deploy:
     repository: <deployments-repo-name>
     author_name: <bot commit author name>
     author_email: <bot commit author email>
+  recent_deployment_window: 2h # Optional: warn when someone else deployed the same service to a non-prod environment within this window (default: 2h, 0 disables)
   services:
     - name: <service-name>
       githubOrganization: <service-github-organization>
