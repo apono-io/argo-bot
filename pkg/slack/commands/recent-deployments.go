@@ -19,8 +19,6 @@ type recentDeploymentGroup struct {
 	serviceNames  []string
 }
 
-// recentDeploymentsWarning builds a block that mentions whoever recently deployed the requested services to the same
-// environment, so the requester checks with them before approving. Returns nil when there is nothing to warn about.
 func (c *controller) recentDeploymentsWarning(botCtx slacker.BotContext, ctxLogger *log.Entry, environment string, recentDeployments []deploy.RecentDeployment) slackgo.Block {
 	if len(recentDeployments) == 0 {
 		return nil
@@ -46,7 +44,6 @@ func (c *controller) recentDeploymentsWarning(botCtx slacker.BotContext, ctxLogg
 	return slackgo.NewSectionBlock(slackgo.NewTextBlockObject(slackgo.MarkdownType, text, false, false), nil, nil)
 }
 
-// groupRecentDeployments groups services deployed together (same deployer and version), keeping the input order.
 func groupRecentDeployments(recentDeployments []deploy.RecentDeployment) []*recentDeploymentGroup {
 	var groups []*recentDeploymentGroup
 	groupByKey := map[string]*recentDeploymentGroup{}
@@ -73,8 +70,6 @@ func groupRecentDeployments(recentDeployments []deploy.RecentDeployment) []*rece
 	return groups
 }
 
-// deployerMention mentions the deployer's Slack user so they get notified. Looking up a user by email needs the
-// users:read.email scope; without it, fall back to the name and email from the deployment commit.
 func (c *controller) deployerMention(botCtx slacker.BotContext, ctxLogger *log.Entry, deployerName, deployerEmail string) string {
 	user, err := botCtx.SocketModeClient().GetUserByEmail(deployerEmail)
 	if err != nil {

@@ -329,7 +329,6 @@ func (c *apiClient) CommitInBranch(ctx context.Context, organization, repository
 	return false, nil
 }
 
-// ListCommitsForPath returns up to limit commits on branch of the deployment repository that touch path, newest first.
 func (c *apiClient) ListCommitsForPath(ctx context.Context, branch, path string, limit int) ([]*github.RepositoryCommit, error) {
 	if branch == "" {
 		branch = c.baseBranch

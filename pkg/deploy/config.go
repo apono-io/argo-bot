@@ -7,9 +7,8 @@ import (
 )
 
 type Config struct {
-	Github   github.Config
-	Services []Service
-	// Deploying to a non-prod environment warns when someone else deployed the same service there within this window. 0 disables it.
+	Github                 github.Config
+	Services               []Service
 	RecentDeploymentWindow time.Duration `default:"2h"`
 }
 

@@ -9,12 +9,8 @@ import (
 	"time"
 )
 
-// Matches the commit subject written by Deploy, e.g.
-// "Deploy app to dev with version 2a7c930 triggered by Jane Doe (jane@example.com) (#27134)".
 var deployCommitPattern = regexp.MustCompile(`^Deploy \S+ to \S+ with version (\S+) triggered by (.+) \(([^()\s]+@[^()\s]+)\)`)
 
-// Freeze commits touch the template path, not the generated path, but merges or manual commits may still
-// land on the generated path, so look past a few of them before giving up.
 const deployCommitsToScan = 10
 
 type RecentDeployment struct {
@@ -25,8 +21,6 @@ type RecentDeployment struct {
 	DeployedAt    time.Time
 }
 
-// ListRecentDeploymentsByOthers returns the services whose last deployment to environmentName was made by
-// someone other than userEmail within the configured window. Environments with allowed branches (prod) are skipped.
 func (d *githubDeployer) ListRecentDeploymentsByOthers(ctx context.Context, serviceNames []string, environmentName, userEmail string) ([]RecentDeployment, error) {
 	if d.config.RecentDeploymentWindow <= 0 {
 		return nil, nil
