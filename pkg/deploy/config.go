@@ -17,6 +17,7 @@ type Service struct {
 
 type ServiceEnvironment struct {
 	Name                 string `required:"true"`
+	Tags                 []string
 	TemplatePath         string `required:"true"`
 	GeneratedPath        string `required:"true"`
 	AllowedBranches      []string

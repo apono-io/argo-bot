@@ -63,6 +63,8 @@ deploy:
         - <tag-name>
       environments:
         - name: <environment-name>
+          tags: # Optional: aliases that target several environments in one command
+            - <environment-tag-name>
           templatePath: "<templates-folder-path>"
           generatedPath: "<generated-files-folder-path>"
           allowedBranches: # Restriction for deployment branches (Example: only master deployment allowed on prod)
@@ -74,6 +76,57 @@ deploy:
 ``` 
 
 You can see a full example for the deployments repository [here](https://github.com/apono-io/argo-bot/tree/master/examples/deployments-repo)
+
+### Tags
+
+Tags are aliases that let one command cover several deployments. They exist on both axes:
+
+* **Service tags** (`services[].tags`) group services together.
+* **Environment tags** (`services[].environments[].tags`) group environments together.
+
+Anywhere a command takes a service or an environment you can pass a name, a tag, or a
+comma-separated list of either. Both axes expand at once, so a single command may cover
+many service/environment pairs:
+
+```yaml
+services:
+  - name: api
+    tags: ["all-backend"]
+    environments:
+      - name: prod-us
+        tags: ["all-prod"]
+        templatePath: "templates/api"
+        generatedPath: "auto-generated/prod-us/api"
+      - name: prod-eu
+        tags: ["all-prod"]
+        templatePath: "templates/api"
+        generatedPath: "auto-generated/prod-eu/api"
+  - name: worker
+    tags: ["all-backend"]
+    environments:
+      - name: prod-us
+        tags: ["all-prod"]
+        templatePath: "templates/worker"
+        generatedPath: "auto-generated/prod-us/worker"
+```
+
+With that configuration, `deploy all-backend all-prod v1.0.0` deploys `api` to `prod-us`
+and `prod-eu`, and `worker` to `prod-us` — three deployments in one pull request.
+
+Environment tags are resolved per service, so a tag may cover environments that only some
+services define: `worker` above has no `prod-eu`, and is simply deployed to the
+environments it does have. A service that matches *none* of the requested environments is
+an error, so a typo never silently deploys a subset.
+
+Two restrictions apply to a single command, both reported as validation errors before
+anything is committed:
+
+* Every resolved environment must share the same `deploymentRepoBranch`, because one
+  command produces one pull request.
+* No two resolved service/environment pairs may share a `generatedPath`, since rendering
+  clears that folder first and one pair would otherwise discard the other's manifests.
+
+Use the `list` command to see the environments and tags available for each service.
 
 ## Template Processing
 
@@ -226,7 +279,12 @@ Deploy a service to an environment using a commit hash, tag, or branch name:
 ```
 /deploy service-name staging v1.0.0
 ```
-_Note: You can use service names or tags defined in the configuration. Multiple services/tags can be specified by separating them with commas (e.g., `service1,service2` or `tag1,tag2`)_
+
+Deploy several services to several environments at once using tags:
+```
+/deploy all-backend all-prod v1.0.0
+```
+_Note: Both the services and the environment argument accept names or tags defined in the configuration, and each accepts a comma-separated list (e.g., `service1,service2`, `tag1,tag2`, or `prod-us,prod-eu`). See [Tags](#tags)_
 
 ### Freeze/Unfreeze Commands
 Freeze deployments for a service in an environment:
@@ -238,7 +296,7 @@ Unfreeze deployments for a service:
 ```
 /unfreeze service-name production
 ```
-_Note: You can use service names or tags defined in the configuration. Multiple services/tags can be specified by separating them with commas (e.g., `service1,service2` or `tag1,tag2`)_
+_Note: Both the services and the environment argument accept names or tags defined in the configuration, and each accepts a comma-separated list (e.g., `service1,service2`, `tag1,tag2`, or `prod-us,prod-eu`). See [Tags](#tags)_
 
 ### Version Command
 Get the current version of the bot:
@@ -256,7 +314,7 @@ View status of specific services or tags:
 ```
 /list service-name
 ```
-_Note: You can list multiple services/tags by separating them with commas (e.g., `service1,service2` or `tag1,tag2`)_
+_Note: You can list multiple services/tags by separating them with commas (e.g., `service1,service2` or `tag1,tag2`). The listing shows each environment's tags alongside its freeze status._
 
 For all commands that create changes (deploy, freeze, unfreeze), the bot will:
 1. Create a pull request with the changes

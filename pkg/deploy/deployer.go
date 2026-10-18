@@ -36,11 +36,12 @@ type EnvironmentStatus struct {
 
 type Deployer interface {
 	GetCommitSha(ctx context.Context, serviceName []string, commit string) (string, string, error)
-	Deploy(serviceNames []string, environment, commit, commitUrl, userFullname, userEmail string) (*github.PullRequest, string, error)
-	Freeze(serviceNames []string, environment, userFullname, userEmail string, action FreezeAction) (*github.PullRequest, string, error)
+	Deploy(serviceNames, environmentNames []string, commit, commitUrl, userFullname, userEmail string) (*github.PullRequest, string, error)
+	Freeze(serviceNames, environmentNames []string, userFullname, userEmail string, action FreezeAction) (*github.PullRequest, string, error)
 	Approve(ctx context.Context, pullRequestId int) error
 	Cancel(ctx context.Context, pullRequestId int) error
 	ResolveTags(names []string) []string
+	ResolveEnvironmentTags(serviceNames, environmentNames []string) []string
 	ListServices() []Service
 	ListServiceEnvironmentsStatus(serviceNames []string) (map[ServiceName][]EnvironmentStatus, error)
 }
@@ -101,21 +102,22 @@ func (d *githubDeployer) Cancel(ctx context.Context, pullRequestId int) error {
 	return d.githubClient.ClosePR(ctx, pullRequestId)
 }
 
-func (d *githubDeployer) Deploy(serviceNames []string, environmentName, commit, commitUrl, userFullname, userEmail string) (*github.PullRequest, string, error) {
+func (d *githubDeployer) Deploy(serviceNames, environmentNames []string, commit, commitUrl, userFullname, userEmail string) (*github.PullRequest, string, error) {
 	ctx := context.Background()
 	logWithCtx := log.WithFields(log.Fields{
-		"environment":  environmentName,
+		"environments": environmentNames,
 		"serviceNames": serviceNames,
 		"commit":       commit,
 	})
 
-	serviceToEnvironment, deploymentBranch, err := d.resolveServicesAndEnvironment(serviceNames, environmentName)
+	targets, deploymentBranch, err := d.resolveTargets(serviceNames, environmentNames)
 	if err != nil {
 		return nil, "", err
 	}
 
 	servicesString := strings.Join(serviceNames, ",")
-	branch := fmt.Sprintf("deploy-%s-%s", servicesString, environmentName)
+	environmentsString := strings.Join(environmentNames, ",")
+	branch := fmt.Sprintf("deploy-%s-%s", servicesString, environmentsString)
 
 	baseFolder, ref, err := d.cloneBranch(ctx, branch, deploymentBranch)
 	if err != nil {
@@ -128,61 +130,52 @@ func (d *githubDeployer) Deploy(serviceNames []string, environmentName, commit, 
 		}
 	}()
 
-	var frozenServices []string
-	for service, environment := range serviceToEnvironment {
-		if len(environment.AllowedBranches) > 0 {
+	var frozenTargets []string
+	for _, target := range targets {
+		if len(target.Environment.AllowedBranches) > 0 {
 			logWithCtx.Infof("Validating branch")
-			validBranch, err := d.validateBranch(ctx, service.GithubOrganization, service.GithubRepository, commit, environment.AllowedBranches)
+			validBranch, err := d.validateBranch(ctx, target.Service.GithubOrganization, target.Service.GithubRepository, commit, target.Environment.AllowedBranches)
 			if err != nil {
 				return nil, "", err
 			}
 
 			if !validBranch {
-				return nil, "", api.NewValidationErr(fmt.Sprintf("commit is not in allowed branches for service %s", service.Name))
+				return nil, "", api.NewValidationErr(fmt.Sprintf("commit is not in allowed branches for service %s", target.Service.Name))
 			}
 		}
 
-		freezeFilePath := getFreezeFilePath(*environment)
+		freezeFilePath := getFreezeFilePath(*target.Environment)
 		frozen, err := d.checkIfServiceFrozen(baseFolder, freezeFilePath)
 		if err != nil {
-			return nil, "", fmt.Errorf("failed to check if service %s is frozen, error: %w", service.Name, err)
+			return nil, "", fmt.Errorf("failed to check if %s is frozen, error: %w", target, err)
 		}
 		if frozen {
-			frozenServices = append(frozenServices, service.Name)
+			frozenTargets = append(frozenTargets, target.String())
 		}
 	}
 
-	if len(frozenServices) > 0 {
-		return nil, "", api.NewValidationErr(fmt.Sprintf("cannot deploy: services are frozen: %s", strings.Join(frozenServices, ", ")))
+	if len(frozenTargets) > 0 {
+		return nil, "", api.NewValidationErr(fmt.Sprintf("cannot deploy: services are frozen: %s", strings.Join(frozenTargets, ", ")))
 	}
 
 	logWithCtx.Infof("Starting deployment")
-	prTitle := fmt.Sprintf("Deploy %s to %s with version %s triggered by %s (%s)", servicesString, environmentName, commit[:7], userFullname, userEmail)
+	prTitle := fmt.Sprintf("Deploy %s to %s with version %s triggered by %s (%s)", servicesString, environmentsString, commit[:7], userFullname, userEmail)
 
-	// Process all services to collect their files
-	allServiceFiles := make(map[string][]string) // service -> files
-	for service, environment := range serviceToEnvironment {
-		files, err := d.renderTemplates(baseFolder, environment.TemplatePath, environment.GeneratedPath, service.Name, environmentName, commit, environment, logWithCtx)
-		if err != nil {
-			return nil, "", fmt.Errorf("failed to render templates for service %s, error: %w", service.Name, err)
-		}
-		allServiceFiles[service.Name] = files
-	}
-
-	// Check for file conflicts between services
 	fileOwners := make(map[string]string)
-	for serviceName, files := range allServiceFiles {
+	var uniqueFiles []string
+	for _, target := range targets {
+		files, err := d.renderTemplates(baseFolder, target.Service.Name, commit, target.Environment, logWithCtx)
+		if err != nil {
+			return nil, "", fmt.Errorf("failed to render templates for %s, error: %w", target, err)
+		}
+
 		for _, file := range files {
 			if existingOwner, exists := fileOwners[file]; exists {
-				return nil, "", fmt.Errorf("file conflict: both service '%s' and service '%s' are trying to modify file '%s'", existingOwner, serviceName, file)
+				return nil, "", api.NewValidationErr(fmt.Sprintf("file conflict: both %s and %s are trying to modify file '%s'", existingOwner, target, file))
 			}
-			fileOwners[file] = serviceName
+			fileOwners[file] = target.String()
+			uniqueFiles = append(uniqueFiles, file)
 		}
-	}
-
-	var uniqueFiles []string
-	for file := range fileOwners {
-		uniqueFiles = append(uniqueFiles, file)
 	}
 
 	tree, err := d.githubClient.CreateTree(ctx, ref, baseFolder, uniqueFiles)
@@ -190,13 +183,12 @@ func (d *githubDeployer) Deploy(serviceNames []string, environmentName, commit, 
 		return nil, "", fmt.Errorf("failed to create diff tree for services, error: %w", err)
 	}
 
-	commitMsg := fmt.Sprintf("Deploy %s to %s with version %s triggered by %s (%s)", servicesString, environmentName, commit[:7], userFullname, userEmail)
-	if err = d.githubClient.PushCommit(ctx, ref, tree, userFullname, userEmail, commitMsg); err != nil {
+	if err = d.githubClient.PushCommit(ctx, ref, tree, userFullname, userEmail, withTargetsList(prTitle, targets)); err != nil {
 		return nil, "", fmt.Errorf("failed to create commit for services, error: %w", err)
 	}
 
-	prDescription := fmt.Sprintf("Service Names: %s\nEnvironment: %s\nCommit: [%s](%s)\nRequested by: %s (%s)",
-		servicesString, environmentName, commit[:7], commitUrl, userFullname, userEmail)
+	prDescription := fmt.Sprintf("Service Names: %s\nEnvironment: %s\nCommit: [%s](%s)\nRequested by: %s (%s)\n\nDeployments:\n%s",
+		servicesString, environmentsString, commit[:7], commitUrl, userFullname, userEmail, targetsList(targets))
 	pr, diff, err := d.githubClient.CreatePR(ctx, prTitle, prDescription, deploymentBranch, branch)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create pull request, error: %w", err)
@@ -207,24 +199,25 @@ func (d *githubDeployer) Deploy(serviceNames []string, environmentName, commit, 
 	return pr, diff, nil
 }
 
-func (d *githubDeployer) Freeze(serviceNames []string, environment, userFullname, userEmail string, action FreezeAction) (*github.PullRequest, string, error) {
+func (d *githubDeployer) Freeze(serviceNames, environmentNames []string, userFullname, userEmail string, action FreezeAction) (*github.PullRequest, string, error) {
 	ctx := context.Background()
 	logWithCtx := log.WithFields(log.Fields{
-		"environment":  environment,
+		"environments": environmentNames,
 		"serviceNames": serviceNames,
 		"action":       action,
 	})
 
-	serviceToEnvironment, deploymentBranch, err := d.resolveServicesAndEnvironment(serviceNames, environment)
+	targets, deploymentBranch, err := d.resolveTargets(serviceNames, environmentNames)
 	if err != nil {
 		return nil, "", err
 	}
 
 	servicesString := strings.Join(serviceNames, ",")
+	environmentsString := strings.Join(environmentNames, ",")
 
 	logWithCtx.Infof("Starting %s operation", action)
-	branch := fmt.Sprintf("%s-%s-%s", action, servicesString, environment)
-	prTitle := fmt.Sprintf("%s %s to %s triggered by %s (%s)", action, servicesString, environment, userFullname, userEmail)
+	branch := fmt.Sprintf("%s-%s-%s", action, servicesString, environmentsString)
+	prTitle := fmt.Sprintf("%s %s to %s triggered by %s (%s)", action, servicesString, environmentsString, userFullname, userEmail)
 
 	baseFolder, ref, err := d.cloneBranch(ctx, branch, deploymentBranch)
 	if err != nil {
@@ -237,60 +230,57 @@ func (d *githubDeployer) Freeze(serviceNames []string, environment, userFullname
 		}
 	}()
 
-	changesDetected := false
-	freezeFiles := make(map[string]struct{})
+	var changedTargets []deploymentTarget
+	var allFreezeFiles []string
+	seenFreezeFiles := make(map[string]struct{})
 
-	for service, environment := range serviceToEnvironment {
-		freezeFilePath := getFreezeFilePath(*environment)
+	for _, target := range targets {
+		freezeFilePath := getFreezeFilePath(*target.Environment)
 
 		var freezeFile string
 		if action == FreezeActionUnfreeze {
 			frozen, err := d.checkIfServiceFrozen(baseFolder, freezeFilePath)
 			if err != nil {
-				return nil, "", fmt.Errorf("failed to check if service %s is frozen, error: %w", service.Name, err)
+				return nil, "", fmt.Errorf("failed to check if %s is frozen, error: %w", target, err)
 			}
 			if !frozen {
 				continue
 			}
 			freezeFile, err = d.removeFreezeFile(baseFolder, freezeFilePath)
 			if err != nil {
-				return nil, "", fmt.Errorf("failed to remove freeze file for service %s, error: %w", service.Name, err)
+				return nil, "", fmt.Errorf("failed to remove freeze file for %s, error: %w", target, err)
 			}
 		} else {
 			freezeFile, err = d.createFreezeFile(baseFolder, freezeFilePath)
 			if err != nil {
-				return nil, "", fmt.Errorf("failed to create freeze file for service %s, error: %w", service.Name, err)
+				return nil, "", fmt.Errorf("failed to create freeze file for %s, error: %w", target, err)
 			}
 		}
 
-		freezeFiles[freezeFile] = struct{}{}
-		changesDetected = true
+		if _, seen := seenFreezeFiles[freezeFile]; !seen {
+			seenFreezeFiles[freezeFile] = struct{}{}
+			allFreezeFiles = append(allFreezeFiles, freezeFile)
+		}
+		changedTargets = append(changedTargets, target)
 	}
 
-	if changesDetected {
-		var allFreezeFiles []string
-		for file := range freezeFiles {
-			allFreezeFiles = append(allFreezeFiles, file)
-		}
-
-		tree, err := d.githubClient.CreateTree(ctx, ref, baseFolder, allFreezeFiles)
-		if err != nil {
-			return nil, "", fmt.Errorf("failed to create diff tree for %s operation, error: %w", action, err)
-		}
-
-		commitMsg := fmt.Sprintf("%s %s on %s triggered by %s (%s)", action, servicesString, environment, userFullname, userEmail)
-		if err = d.githubClient.PushCommit(ctx, ref, tree, userFullname, userEmail, commitMsg); err != nil {
-			return nil, "", fmt.Errorf("failed to create commit for %s operation, error: %w", action, err)
-		}
-	}
-
-	if !changesDetected {
+	if len(changedTargets) == 0 {
 		logWithCtx.Info("No changes needed - services already in desired state")
 		return nil, "", nil
 	}
 
-	prDescription := fmt.Sprintf("Service Names: %s\nEnvironment: %s\nRequested by: %s (%s)",
-		servicesString, environment, userFullname, userEmail)
+	tree, err := d.githubClient.CreateTree(ctx, ref, baseFolder, allFreezeFiles)
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to create diff tree for %s operation, error: %w", action, err)
+	}
+
+	commitMsg := fmt.Sprintf("%s %s on %s triggered by %s (%s)", action, servicesString, environmentsString, userFullname, userEmail)
+	if err = d.githubClient.PushCommit(ctx, ref, tree, userFullname, userEmail, withTargetsList(commitMsg, changedTargets)); err != nil {
+		return nil, "", fmt.Errorf("failed to create commit for %s operation, error: %w", action, err)
+	}
+
+	prDescription := fmt.Sprintf("Service Names: %s\nEnvironment: %s\nRequested by: %s (%s)\n\n%s:\n%s",
+		servicesString, environmentsString, userFullname, userEmail, action, targetsList(changedTargets))
 	pr, diff, err := d.githubClient.CreatePR(ctx, prTitle, prDescription, deploymentBranch, branch)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to create pull request, error: %w", err)
@@ -315,29 +305,53 @@ func (d *githubDeployer) cloneBranch(ctx context.Context, tmoBranch, deploymentB
 	return baseFolder, ref, nil
 }
 
-func (d *githubDeployer) resolveServicesAndEnvironment(serviceNames []string, environmentName string) (map[*Service]*ServiceEnvironment, string, error) {
+func (d *githubDeployer) resolveTargets(serviceNames, environmentNames []string) ([]deploymentTarget, string, error) {
 	services, err := d.LookupServices(serviceNames)
 	if err != nil {
 		return nil, "", err
 	}
 
-	serviceToEnvironment := map[*Service]*ServiceEnvironment{}
+	var targets []deploymentTarget
 	var environments []*ServiceEnvironment
 	for _, service := range services {
-		environment, err := d.LookupEnvironment(service, environmentName)
+		serviceEnvironments, err := d.LookupEnvironments(service, environmentNames)
 		if err != nil {
 			return nil, "", err
 		}
-		serviceToEnvironment[service] = environment
-		environments = append(environments, environment)
+
+		for _, environment := range serviceEnvironments {
+			targets = append(targets, deploymentTarget{Service: service, Environment: environment})
+			environments = append(environments, environment)
+		}
 	}
 
 	if !areEnvironmentsFromSameBranch(environments) {
 		return nil, "", api.NewValidationErr("environments have different deployment branches")
 	}
+
+	if err = validateNoSharedGeneratedPath(targets); err != nil {
+		return nil, "", err
+	}
+
 	deploymentBranch := environments[0].DeploymentRepoBranch
 
-	return serviceToEnvironment, deploymentBranch, nil
+	return targets, deploymentBranch, nil
+}
+
+// Rendering clears the generated folder first, so targets sharing one would
+// silently discard each other's manifests.
+func validateNoSharedGeneratedPath(targets []deploymentTarget) error {
+	owners := make(map[string]string, len(targets))
+	for _, target := range targets {
+		owner := fmt.Sprintf("%s/%s", target.Service.Name, target.Environment.Name)
+		if existingOwner, exists := owners[target.Environment.GeneratedPath]; exists {
+			return api.NewValidationErr(fmt.Sprintf("%s and %s both generate into %s, only one of them can be deployed at a time",
+				existingOwner, owner, target.Environment.GeneratedPath))
+		}
+		owners[target.Environment.GeneratedPath] = owner
+	}
+
+	return nil
 }
 
 func (d *githubDeployer) validateBranch(ctx context.Context, organization, repository, commit string, branches []string) (bool, error) {
@@ -357,7 +371,11 @@ func (d *githubDeployer) checkIfServiceFrozen(baseFolder, freezeFilePath string)
 	return true, nil
 }
 
-func (d *githubDeployer) renderTemplates(baseFolder, templatePath, generatedPath, serviceName, environment, commit string, env *ServiceEnvironment, log *log.Entry) ([]string, error) {
+func (d *githubDeployer) renderTemplates(baseFolder, serviceName, commit string, env *ServiceEnvironment, log *log.Entry) ([]string, error) {
+	templatePath := env.TemplatePath
+	generatedPath := env.GeneratedPath
+	environment := env.Name
+
 	// Get existing files before cleaning
 	existingFiles := d.findExistingFiles(baseFolder, generatedPath)
 	log.Infof("Found %d existing files in %s", len(existingFiles), generatedPath)
@@ -711,13 +729,72 @@ func (d *githubDeployer) lookupServicesByTageOrName(name string) ([]*Service, er
 	return services, nil
 }
 
-func (d *githubDeployer) LookupEnvironment(service *Service, name string) (*ServiceEnvironment, error) {
+func (d *githubDeployer) LookupEnvironments(service *Service, names []string) ([]*ServiceEnvironment, error) {
+	uniqueMap := make(map[string]bool)
+	var environments []*ServiceEnvironment
 	for _, environment := range service.Environments {
-		if strings.ToLower(environment.Name) == strings.ToLower(name) {
-			return &environment, nil
+		if !environmentMatchesAny(environment, names) {
+			continue
+		}
+
+		if uniqueMap[environment.Name] {
+			continue
+		}
+
+		uniqueMap[environment.Name] = true
+		currentEnvironment := environment
+		environments = append(environments, &currentEnvironment)
+	}
+
+	if len(environments) == 0 {
+		return nil, api.NewValidationErr(fmt.Sprintf("environment %s does not exist for service %s", strings.Join(names, ","), service.Name))
+	}
+
+	return environments, nil
+}
+
+func environmentMatchesAny(environment ServiceEnvironment, names []string) bool {
+	for _, name := range names {
+		lookupName := strings.ToLower(name)
+		if strings.ToLower(environment.Name) == lookupName {
+			return true
+		}
+		if slices.ContainsFunc(environment.Tags, func(tag string) bool { return strings.ToLower(tag) == lookupName }) {
+			return true
 		}
 	}
-	return nil, api.NewValidationErr(fmt.Sprintf("environment %s does not exist for service %s", name, service.Name))
+
+	return false
+}
+
+func (d *githubDeployer) ResolveEnvironmentTags(serviceNames, environmentNames []string) []string {
+	services, err := d.LookupServices(serviceNames)
+	if err != nil {
+		return environmentNames
+	}
+
+	uniqueMap := make(map[string]bool)
+	var resolvedNames []string
+	for _, service := range services {
+		environments, err := d.LookupEnvironments(service, environmentNames)
+		if err != nil {
+			continue
+		}
+
+		for _, environment := range environments {
+			if uniqueMap[environment.Name] {
+				continue
+			}
+			uniqueMap[environment.Name] = true
+			resolvedNames = append(resolvedNames, environment.Name)
+		}
+	}
+
+	if len(resolvedNames) == 0 {
+		return environmentNames
+	}
+
+	return resolvedNames
 }
 
 func (d *githubDeployer) ListServiceEnvironmentsStatus(serviceNames []string) (map[ServiceName][]EnvironmentStatus, error) {
@@ -798,6 +875,33 @@ func (d *githubDeployer) getEnvironmentsStatusForBranch(branch string, environme
 	}
 
 	return frozenStatus, nil
+}
+
+type deploymentTarget struct {
+	Service     *Service
+	Environment *ServiceEnvironment
+}
+
+func (t deploymentTarget) String() string {
+	return fmt.Sprintf("%s/%s", t.Service.Name, t.Environment.Name)
+}
+
+func targetsList(targets []deploymentTarget) string {
+	lines := make([]string, 0, len(targets))
+	for _, target := range targets {
+		lines = append(lines, "- "+target.String())
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// The commit body is what carries a tag's expansion through the squash merge.
+func withTargetsList(message string, targets []deploymentTarget) string {
+	if len(targets) < 2 {
+		return message
+	}
+
+	return fmt.Sprintf("%s\n\n%s", message, targetsList(targets))
 }
 
 type serviceEnvToCheck struct {

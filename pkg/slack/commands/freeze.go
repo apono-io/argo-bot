@@ -43,11 +43,13 @@ func (c *controller) handleFreezeCommands(botCtx slacker.BotContext, req slacker
 		WithField("environment", environment)
 
 	services := utils.UniqueStrings(strings.Split(serviceName, ","))
+	environments := utils.UniqueStrings(strings.Split(environment, ","))
 	resolvedServices := c.deployer.ResolveTags(services)
+	resolvedEnvironments := c.deployer.ResolveEnvironmentTags(services, environments)
 
 	freezeReq := freezeRequest{
 		ServiceNames: resolvedServices,
-		Environment:  environment,
+		Environment:  strings.Join(resolvedEnvironments, ", "),
 		UserId:       botCtx.Event().UserID,
 		Action:       action,
 	}
@@ -67,7 +69,7 @@ func (c *controller) handleFreezeCommands(botCtx slacker.BotContext, req slacker
 	}
 
 	userFullname := fmt.Sprintf("%s %s", profile.FirstName, profile.LastName)
-	pr, diff, err := c.deployer.Freeze(services, environment, userFullname, profile.Email, action)
+	pr, diff, err := c.deployer.Freeze(services, environments, userFullname, profile.Email, action)
 	if err != nil {
 		ctxLogger.WithError(err).Error("Failed to freeze services")
 		c.sendFreezeErrorMessage(botCtx, ctxLogger, freezeReq, err)
