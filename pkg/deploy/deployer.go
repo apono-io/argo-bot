@@ -44,6 +44,7 @@ type Deployer interface {
 	ResolveEnvironmentTags(serviceNames, environmentNames []string) []string
 	ListServices() []Service
 	ListServiceEnvironmentsStatus(serviceNames []string) (map[ServiceName][]EnvironmentStatus, error)
+	ListRecentDeploymentsByOthers(ctx context.Context, serviceNames []string, environment, userEmail string) ([]RecentDeployment, error)
 }
 
 func New(config Config) (Deployer, error) {
