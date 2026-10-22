@@ -1,4 +1,4 @@
-FROM alpine@sha256:4ff3ca91275773af45cb4b0834e12b7eb47d1c18f770a0b151381cd227f4c253 as builder
+FROM alpine:3.24.3@sha256:b3413572228e34bd1c9245f5565e6cd127005655e8a7899aef33d8e83255c9e6 as builder
 
 # Install git + SSL ca certificates.
 # Git is required for fetching the dependencies.
