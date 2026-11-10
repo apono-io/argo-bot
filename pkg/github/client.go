@@ -31,6 +31,7 @@ type Client interface {
 	ClosePR(ctx context.Context, id int) error
 	GetCommitSha(ctx context.Context, organization, repository, commit string) (string, string, error)
 	CommitInBranch(ctx context.Context, organization, repository, commit string, branches []string) (bool, error)
+	ListCommitsForPath(ctx context.Context, branch, path string, limit int) ([]*github.RepositoryCommit, error)
 }
 
 func NewClient(ctx context.Context, config Config) (Client, error) {
@@ -326,6 +327,23 @@ func (c *apiClient) CommitInBranch(ctx context.Context, organization, repository
 	}
 
 	return false, nil
+}
+
+func (c *apiClient) ListCommitsForPath(ctx context.Context, branch, path string, limit int) ([]*github.RepositoryCommit, error) {
+	if branch == "" {
+		branch = c.baseBranch
+	}
+
+	commits, _, err := c.client.Repositories.ListCommits(ctx, c.organization, c.repository, &github.CommitsListOptions{
+		SHA:         branch,
+		Path:        path,
+		ListOptions: github.ListOptions{PerPage: limit},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return commits, nil
 }
 
 func (c *apiClient) deleteBranch(ctx context.Context, branchName string) error {

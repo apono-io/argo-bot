@@ -90,7 +90,13 @@ func (c *controller) handleDeploy(botCtx slacker.BotContext, req slacker.Request
 		return
 	}
 
-	c.sendApprovalMessage(botCtx, deploymentReq, ctxLogger, pr, diff)
+	recentDeployments, err := c.deployer.ListRecentDeploymentsByOthers(botCtx.Context(), services, environment, profile.Email)
+	if err != nil {
+		ctxLogger.WithError(err).Warn("Failed to list recent deployments, sending approval message without the warning")
+	}
+
+	recentDeploymentsWarning := c.recentDeploymentsWarning(botCtx, ctxLogger, environment, recentDeployments)
+	c.sendApprovalMessage(botCtx, deploymentReq, ctxLogger, pr, diff, recentDeploymentsWarning)
 }
 
 func (c *controller) sendRequestDetails(botCtx slacker.BotContext, ctxLogger *log.Entry, req deploymentRequest) (string, string, error) {
@@ -137,7 +143,7 @@ func (c *controller) messageWithRequestDetails(requestDetailsColor string, statu
 	}
 }
 
-func (c *controller) sendApprovalMessage(botCtx slacker.BotContext, req deploymentRequest, ctxLogger *log.Entry, pr *github.PullRequest, diff string) {
+func (c *controller) sendApprovalMessage(botCtx slacker.BotContext, req deploymentRequest, ctxLogger *log.Entry, pr *github.PullRequest, diff string, recentDeploymentsWarning slackgo.Block) {
 	req.PrNumber = pr.Id
 	bytes, err := json.Marshal(req)
 	if err != nil {
@@ -160,15 +166,21 @@ func (c *controller) sendApprovalMessage(botCtx slacker.BotContext, req deployme
 		diffText = "_Nothing to change, merging this PR will only create empty commit_"
 	}
 
+	var approvalBlocks []slackgo.Block
+	if recentDeploymentsWarning != nil {
+		approvalBlocks = append(approvalBlocks, recentDeploymentsWarning)
+	}
+	approvalBlocks = append(approvalBlocks,
+		slackgo.NewSectionBlock(slackgo.NewTextBlockObject(slackgo.MarkdownType, diffText, false, false), nil, nil),
+		slackgo.NewContextBlock("", slackgo.NewTextBlockObject(slackgo.MarkdownType, fmt.Sprintf("<%s|Original pull request>", pr.Link), false, false)),
+		slackgo.NewActionBlock(deploymentApprovalBlockId,
+			approveBtn,
+			rejectBtn,
+		),
+	)
+
 	_, _, _, err = botCtx.SocketModeClient().UpdateMessage(*req.Channel, *req.Timestamp,
-		c.messageWithRequestDetails(lightBlueColor, noStatus, req,
-			slackgo.NewSectionBlock(slackgo.NewTextBlockObject(slackgo.MarkdownType, diffText, false, false), nil, nil),
-			slackgo.NewContextBlock("", slackgo.NewTextBlockObject(slackgo.MarkdownType, fmt.Sprintf("<%s|Original pull request>", pr.Link), false, false)),
-			slackgo.NewActionBlock(deploymentApprovalBlockId,
-				approveBtn,
-				rejectBtn,
-			),
-		)...,
+		c.messageWithRequestDetails(lightBlueColor, noStatus, req, approvalBlocks...)...,
 	)
 
 	if err != nil {
