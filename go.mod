@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	github.com/bradleyfalzon/ghinstallation/v2 v2.7.0
-	github.com/cristalhq/aconfig v0.18.5
+	github.com/cristalhq/aconfig v0.19.0
 	github.com/cristalhq/aconfig/aconfigdotenv v0.17.1
 	github.com/cristalhq/aconfig/aconfigyaml v0.17.1
 	github.com/form3tech-oss/logrus-logzio-hook v1.0.0
@@ -31,6 +31,7 @@ require (
 	github.com/gorilla/websocket v1.5.0 // indirect
 	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
+	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20221212215047-62379fc7944b // indirect
 	github.com/robfig/cron v1.2.0 // indirect
 	github.com/shirou/gopsutil/v3 v3.23.7 // indirect
